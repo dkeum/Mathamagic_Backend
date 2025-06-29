@@ -28,7 +28,8 @@ app.options("/email", (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "https://mathamagic.vercel.app");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  res.status(204).end(); // no content
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  return res.status(204).end(); // no content
 });
 
 app.post("/email", async (req, res) => {
@@ -41,9 +42,6 @@ app.post("/email", async (req, res) => {
     return res.status(400).json({ error: "Email is required" });
   }
 
-//   console.log("Received email:", email, fullName, message);
-//   console.log("EMAIL_USER:", process.env.GMAIL_USER);
-//   console.log("EMAIL_PASS:", process.env.GMAIL_APP_PASSWORD);
   try {
     const transporter = nodemailer.createTransport({
       service: "gmail",

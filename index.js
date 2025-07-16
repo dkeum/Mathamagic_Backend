@@ -60,13 +60,14 @@ app.post("/email", async (req, res) => {
 
     await transporter.sendMail(mailOptions);
 
-    res.status(200).json({ message: "Email sent successfully" });
+   return  res.status(200).json({ message: "Email sent successfully" });
   } catch (err) {
     console.error("Error sending email:", err);
-    res.status(500).json({ error: "Failed to send email" });
+    return res.status(500).json({ error: "Failed to send email" });
   }
 });
 
 app.listen(PORT, () => {
   console.log(`App is listening on port: ${PORT}`);
 });
+

@@ -19,8 +19,6 @@ app.use(cors({
 app.use(express.json());
 const PORT = 3000;
 
-
-
 app.use("/",require("./routes/publicAPI/contactRoute"))
 
 

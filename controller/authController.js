@@ -14,6 +14,7 @@ const signUp = asyncHandler(async (req, res) => {
       .json({ error: "Email and password (min 6 chars) are required." });
   }
 
+
   try {
     const { data, error } = await supabase.auth.signUp({ email, password });
 
@@ -22,7 +23,6 @@ const signUp = asyncHandler(async (req, res) => {
       return res.status(400).json({ error: error.code });
     }
 
-    console.log("New user signed up:", data.user);
     return res
       .status(200)
       .json({ message: "Signup successful", user: data.user });
@@ -32,9 +32,10 @@ const signUp = asyncHandler(async (req, res) => {
   }
 });
 
-// @ GET
+// @ POST
 // ROUTE: /logout
 const logOut = asyncHandler(async (req, res) => {
+
   res.clearCookie("access_token");
   return res.status(200);
 });
@@ -44,7 +45,6 @@ const logOut = asyncHandler(async (req, res) => {
 const login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
-  // Validate input
   if (!email || !password) {
     return res.status(400).json({ error: "Email and password are required." });
   }
@@ -61,17 +61,54 @@ const login = asyncHandler(async (req, res) => {
         .json({ error: error?.message || "Invalid credentials" });
     }
 
+    const userEmail = data.user.email;
+    const id = data.user.id
+
+    // Step 1: Check if student exists
+    const { data: existingStudent, error: selectError } = await supabase
+      .from("Student")
+      .select("*")
+      .eq("email", userEmail)
+      .single();
+
+    // console.log(existingStudent)
+
+    let studentData = existingStudent;
+
+    // Step 2: If not found, insert student
+    if (existingStudent === null) {
+      const { data: newStudent, error: insertError } = await supabase
+        .from("Student") // <- corrected table name to "Students"
+        .insert([{ email: userEmail , id}])
+        .select()
+        .single(); // immediately get inserted row
+
+      // console.log(newStudent).
+
+      if (insertError) {
+        console.error("Error inserting student:", insertError);
+        return res
+          .status(500)
+          .json({ error: "Failed to create student record." });
+      }
+
+      studentData = newStudent;
+    }
+
     // Set access token as HTTP-only cookie
     res.cookie("access_token", data.session.access_token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production", // Use secure cookie in production
+      secure: process.env.NODE_ENV === "production",
       sameSite: "Lax",
-      maxAge: 60 * 60 * 24 * 1, // 1 days
+      maxAge: 60 * 60 * 24 * 1000, // 1 day in ms
     });
 
-    return res
-      .status(200)
-      .json({ message: "Login successful", user: data.user });
+    // Final response: include student info from DB
+    return res.status(200).json({
+      message: "Login successful",
+      user: data.user,
+      student: studentData,
+    });
   } catch (err) {
     console.error("Login error:", err);
     return res.status(500).json({ error: "Internal server error" });

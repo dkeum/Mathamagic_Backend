@@ -16,7 +16,7 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: allowedOrigins,
-    methods: ["GET", "POST"],
+    methods: ["GET", "POST", "PUT", "OPTIONS"],
     allowedHeaders: ["Content-Type"],
     credentials: true, // ⬅️ allows sending cookies
   })
@@ -29,21 +29,9 @@ const PORT = 3000;
 
 app.use("/", require("./routes/publicAPI/contactRoute"));
 app.use("/", require("./routes/authRoute"));
+app.use("/", require("./routes/userRoute"))
+app.use("/", require("./routes/questionRoute"))
 
-
-
-
-
-  app.get("/private", async(req,res)=>{
-    const token = req.cookies.access_token
-    if(!token){
-      return res.redirect("https://mathamagic.vercel.app")
-    }
-
-    const {data, error} = await supabase.auth.getUser(token);
-
-
-  })
 
 
 

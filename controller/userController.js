@@ -1,5 +1,6 @@
 const asyncHandler = require("express-async-handler");
 const supabase = require("../config/supabaseClient");
+const dateFunctions = require("./helperFunctions/date");
 
 // @ POST
 // ROUTE: /update-user
@@ -154,6 +155,86 @@ const getProgress = asyncHandler(async (req, res) => {
   const studentId = studentData.id;
   const className = studentData.class;
   const grade = studentData.grade;
+  const time_logged = studentData.time_logged;
+  let completion_progress = 0;
+  const timeCommitment = studentData.time_commitment;
+  let time_goal_met = 0;
+
+  let github_activity = [];
+
+  const date40DaysAgo = new Date();
+  date40DaysAgo.setDate(date40DaysAgo.getDate() - 200);
+  const fortyDaysAgoStr = date40DaysAgo.toISOString().slice(0, 10);
+  github_activity.push({
+    date: fortyDaysAgoStr,
+    count: 0,
+    level: 0,
+  });
+
+  if (time_logged.length === 0) {
+    github_activity = [
+      {
+        date: "2025-06-23",
+        count: 1,
+        level: 1,
+      },
+      {
+        date: "2025-08-02",
+        count: 1,
+        level: 4,
+      },
+      {
+        date: "2025-11-29",
+        count: 1,
+        level: 3,
+      },
+    ];
+  } else {
+    const groupedByDate = time_logged.reduce((acc, timestamp) => {
+      const date = timestamp.slice(0, 10);
+      if (!acc[date]) acc[date] = [];
+      acc[date].push(new Date(timestamp));
+      return acc;
+    }, {});
+
+    const addedDates = new Set();
+    for (const date in groupedByDate) {
+      const times = groupedByDate[date].sort((a, b) => a - b);
+    
+      for (let i = 0; i < times.length - 1; i++) {
+        const diffMs = times[i + 1] - times[i];
+        const diffHours = diffMs / (1000 * 60 * 60);
+    
+        let level = 1; // default
+        if (diffHours < 3) {
+          level = 2;
+        } else if (diffHours > 3 && diffHours < 5) {
+          level = 3;
+        } else if (diffHours > 6) {
+          level = 4;
+        }
+    
+        if (!addedDates.has(date)) {
+          github_activity.push({
+            date: date,
+            count: 1,
+            level,
+          });
+          addedDates.add(date);
+        }
+      }
+    }
+
+    // console.log(github_activity)
+
+    // console.log(time_logged, timeCommitment)
+
+    const result = dateFunctions.calculateWeeklyGoal(
+      time_logged,
+      timeCommitment
+    );
+    time_goal_met = result.time_goal_met;
+  }
 
   // console.log(studentId, className, grade);
 
@@ -168,6 +249,7 @@ const getProgress = asyncHandler(async (req, res) => {
   // console.log(progressData);
 
   let progressArray = [];
+  let current_grade = 0;
 
   // 3. If no progress data, initialize progress
   if (!progressData || progressData.length === 0) {
@@ -211,7 +293,7 @@ const getProgress = asyncHandler(async (req, res) => {
       return res.status(500).json({ error: "Error retrieving sections." });
     }
 
-    console.log("got to this point successfully");
+    // console.log("got to this point successfully");
     // console.log(topics)
     // console.log(sections)
 
@@ -250,55 +332,87 @@ const getProgress = asyncHandler(async (req, res) => {
     // console.log(insertError)
   } else {
     progressArray = progressData.topic_section_progress;
+    let count = 0;
+    let section_progress = 0;
+    let temp_score = 0;
+    let temp_count = 0;
+    for (const section of progressArray) {
+      // console.log(section)
+      // count += 1;
+      // section_progress += section.progress;
+      for (const progress_section of section.sections) {
+        section_progress += progress_section.progress;
+        count += 1;
+        if (progress_section?.latest_grade != null) {
+          temp_score += parseFloat(progress_section.latest_grade);
+          temp_count += 1;
+        }
+      }
+    }
+
+    // console.log(count, section_progress, temp_count, temp_score)
+    if (count > 0) {
+      completion_progress = Math.round((section_progress / count) * 100);
+      if (temp_count === 0) {
+        current_grade = 0;
+      } else {
+        current_grade = Math.round((temp_score / (temp_count * 100)) * 100);
+      }
+
+      // console.log(temp_score, temp_count, current_grade);
+      // console.log("printing completion_progress")
+      // console.log(completion_progress)
+    }
   }
 
   // return the completion progress, current, github login array
 
-  // supabase
-  // get the student's class and all the topics and sections for that class.
+  // console.log(github_activity);
+  // console.log(completion_progress);
+  // console.log(time_goal_met)
 
   return res.status(200).json({
-    github_activity: [
-      {
-        date: "2025-06-23",
-        count: 2,
-        level: 1,
-      },
-      {
-        date: "2025-08-02",
-        count: 16,
-        level: 4,
-      },
-      {
-        date: "2025-11-29",
-        count: 11,
-        level: 3,
-      },
-    ],
-    current_grade: 65,
-    completion_progress: 50,
+    github_activity,
+    current_grade,
+    completion_progress,
     progressArray,
+    timeCommitment: time_goal_met,
+    actual_time_commitment: timeCommitment,
   });
 });
 
+// @ PUT
+// ROUTE /:topic/:section
+
+const updateGrades = asyncHandler(async (req, res) => {
+  // update the grades for the user
+});
 
 // @ POST
 // ROUTE: /save-session
 
-const saveSession = asyncHandler(async(req,res)=> {
-  
-  const  {email} = req.body
+const saveSession = asyncHandler(async (req, res) => {
+  const { email, timeZone, startTime, endTime } = req.body;
 
-  if( email === none){
-    return res.status(400).json({message:"no email detected"})
+  if (!email) {
+    return res.status(400).json({ message: "No email detected" });
+  }
+  if (!startTime || !endTime) {
+    return res
+      .status(400)
+      .json({ message: "Start and end times are required" });
+  }
+  if (!timeZone) {
+    return res.status(400).json({ message: "Time zone is required" });
   }
 
-  // Extract token from cookie or Authorization header
+  // Extract token
   const token = req.cookies?.access_token;
-
   if (!token) {
     return res.status(401).json({ error: "Missing or invalid token." });
   }
+
+  // console.log("Everything is validated so far")
 
   // Get user from token
   const {
@@ -306,17 +420,85 @@ const saveSession = asyncHandler(async(req,res)=> {
     error: userError,
   } = await supabase.auth.getUser(token);
 
-  const email_detected = user.email
+  if (userError || !user) {
+    return res.status(401).json({ error: "User authentication failed" });
+  }
 
-  // get the table Students and match email. should be single instance. select time_logged 
-  // get all the elements in the array
-  // if empty then create an array and paste in the start_time and end_time
+  const email_detected = user.email;
+  if (email_detected !== email) {
+    return res.status(403).json({ error: "Email mismatch" });
+  }
 
-})
+  // console.log(email_detected)
+
+  // Fetch current time log for the student
+  const { data: studentData, error: fetchError } = await supabase
+    .from("Student")
+    .select("time_logged")
+    .eq("email", email)
+    .single();
+
+  if (fetchError) {
+    return res.status(500).json({ error: "Error fetching student data" });
+  }
+
+  // Convert incoming ISO strings to Date objects
+  const start = new Date(startTime);
+  const end = new Date(endTime);
+
+  // Ensure we're dealing with UTC
+  const startUTC = start.toISOString();
+  const endUTC = end.toISOString();
+
+  let updatedLogs = studentData?.time_logged || [];
+
+  // console.log("printing start time and end time")
+  // console.log(startUTC, endUTC)
+
+  // Filter logs for today
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const todayLogs = updatedLogs.filter((log) => log.slice(0, 10) === today);
+
+  if (todayLogs.length === 0) {
+    // No logs today → add new session
+    updatedLogs.push(startUTC);
+    updatedLogs.push(endUTC);
+  } else {
+    // Find indices of the two timestamps for today
+    // We want to find the first two timestamps in updatedLogs with date === today
+    let count = 0;
+    for (let i = 0; i < updatedLogs.length; i++) {
+      if (updatedLogs[i].slice(0, 10) === today) {
+        count++;
+        // When count == 2, this is the later timestamp we want to update
+        if (count === 2) {
+          updatedLogs[i] = endUTC; // Replace the second timestamp with new endUTC
+          break; // Stop after updating
+        }
+      }
+    }
+  }
+
+  // Save back to Supabase
+  const { error: updateError } = await supabase
+    .from("Student")
+    .update({
+      time_logged: updatedLogs,
+    })
+    .eq("email", email);
+
+  if (updateError) {
+    console.log(updateError);
+    return res.status(500).json({ error: "Error updating session log" });
+  }
+
+  res.status(200).json({ message: "Session saved successfully" });
+});
 
 module.exports = {
   updateUser,
   setName,
   getProgress,
   saveSession,
+  updateGrades,
 };

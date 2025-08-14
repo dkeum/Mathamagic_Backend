@@ -19,6 +19,7 @@ if (process.env.NODE_ENV !== "DEVELOPMENT") {
   // OPTIONS handler for preflight requests
   router.options("/update-user", (req, res) => res.sendStatus(204));
   router.options("/user/setname", (req, res) => res.sendStatus(204));
+  router.options("/:topic/:section", (req, res) => res.sendStatus(204));
   router.options("/:user/getprofile", (req, res) => res.sendStatus(204));
   router.options("/save-session", (req, res) => res.sendStatus(204));
 }
@@ -26,6 +27,7 @@ if (process.env.NODE_ENV !== "DEVELOPMENT") {
 // Actual route handler
 router.post("/update-user", userController.updateUser);
 router.put("/user/setname", userController.setName);
+router.put("/:topic/:section", userController.updateGrades);
 router.get("/:user_email/getprofile", userController.getProgress);
 router.post("/save-session", userController.saveSession);
 

@@ -17,10 +17,18 @@ if (process.env.NODE_ENV !== "DEVELOPMENT") {
   router.use(setCorsHeaders);
 
   // OPTIONS handler for preflight requests
-  router.options("/section/:section", (req, res) => res.sendStatus(204));
+  router.options("/questions/:topic/:section", (req, res) => res.sendStatus(204));
+  router.options("/questions/save-marks", (req, res) => res.sendStatus(204));
+  router.options("/questions/get-questions", (req, res) => res.sendStatus(204));
+  router.options("/questions/fix-questions", (req, res) => res.sendStatus(204));
+  router.options("/questions/fix-mistakes", (req, res) => res.sendStatus(204));
 }
 
 // Actual route handler
-router.get("/section/:section", questionController.getQuestions);
+router.get("/questions/:topic/:section", questionController.getQuestions);
+router.post("/questions/save-marks", questionController.saveQuestionMarks);
+router.get("/questions/get-questions", questionController.getRecordedAnswers)
+router.post("/questions/fix-questions", questionController.fixRecordedAnswers)
+router.post("/questions/fixed-mistakes", questionController.fixMistakes)
 
 module.exports = router;

@@ -31,6 +31,7 @@ app.use("/", require("./routes/publicAPI/contactRoute"));
 app.use("/", require("./routes/authRoute"));
 app.use("/", require("./routes/userRoute"))
 app.use("/", require("./routes/questionRoute"))
+app.use("/", require("./routes/homeworkHelpRoute"))
 
 
 

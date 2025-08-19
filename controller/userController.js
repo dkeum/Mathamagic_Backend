@@ -1,6 +1,8 @@
 const asyncHandler = require("express-async-handler");
 const supabase = require("../config/supabaseClient");
 const dateFunctions = require("./helperFunctions/date");
+const { v4: uuidv4 } = require("uuid"); // import uuid
+const axios = require("axios");
 
 // @ POST
 // ROUTE: /update-user
@@ -158,6 +160,7 @@ const getProgress = asyncHandler(async (req, res) => {
   const time_logged = studentData.time_logged;
   let completion_progress = 0;
   const timeCommitment = studentData.time_commitment;
+  const profile_picture = studentData?.profile_picture
   let time_goal_met = 0;
 
   let github_activity = [];
@@ -171,7 +174,7 @@ const getProgress = asyncHandler(async (req, res) => {
     level: 0,
   });
 
-  if (time_logged.length === 0) {
+  if (time_logged?.length === 0) {
     github_activity = [
       {
         date: "2025-06-23",
@@ -378,6 +381,7 @@ const getProgress = asyncHandler(async (req, res) => {
     progressArray,
     timeCommitment: time_goal_met,
     actual_time_commitment: timeCommitment,
+    profile_picture
   });
 });
 
@@ -495,10 +499,146 @@ const saveSession = asyncHandler(async (req, res) => {
   res.status(200).json({ message: "Session saved successfully" });
 });
 
+// @ PUT
+// ROUTE: /update-profile-info
+const updateProfileInformation = asyncHandler(async (req, res) => {
+  const token = req.cookies?.access_token;
+  if (!token) {
+    return res.status(401).json({ error: "Missing or invalid token." });
+  }
+
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser(token);
+
+  if (userError || !user) {
+    return res.status(401).json({ error: "Unauthorized user." });
+  }
+
+  const email = user.email;
+  const { name } = req.body;  // ✅ now works because Multer parses it
+  let picture_url = null;
+
+  if (req.file) {
+    const uniqueFilename = `${uuidv4()}.png`;
+    const base64Image = req.file.buffer.toString("base64");
+
+    const response = await axios.put(
+      `https://api.github.com/repos/${process.env.GITHUB_REPO}/contents/uploads/${uniqueFilename}`,
+      {
+        message: `Upload image ${uniqueFilename}`,
+        content: base64Image,
+        branch: process.env.GITHUB_BRANCH || "main",
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+          Accept: "application/vnd.github.v3+json",
+        },
+      }
+    );
+
+    picture_url = response.data.content.download_url;
+  }
+
+  if (!name && !picture_url) {
+    return res.status(400).json({ error: "No updates provided." });
+  }
+
+  const { data, error } = await supabase
+    .from("Student")
+    .update({
+      ...(name && { name }),
+      ...(picture_url && { profile_picture: picture_url }),
+    })
+    .eq("email", email)
+    .select();
+
+  if (error) {
+    console.error("Error updating student:", error);
+    return res.status(500).json({ error: "Failed to update student info." });
+  }
+
+  return res.status(200).json({
+    message: "Profile updated successfully",
+    student: data[0],
+  });
+});
+
+
+
+// @ DELETE
+// ROUTE: /delete-account
+const deleteAccount = asyncHandler(async (req, res) => {
+  const token = req.cookies?.access_token;
+  if (!token) {
+    return res.status(401).json({ error: "Missing or invalid token." });
+  }
+
+  // Get user from token
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser(token);
+
+  if (userError || !user) {
+    return res.status(401).json({ error: "Unauthorized user." });
+  }
+
+  const email = user.email;
+
+  // 1. Find the student by email
+  const { data: studentData, error: studentError } = await supabase
+    .from("Student")
+    .select("id")
+    .eq("email", email)
+    .single();
+
+  if (studentError || !studentData) {
+    return res.status(404).json({ error: "Student not found." });
+  }
+
+  const student_id = studentData.id;
+
+  // 2. Delete related Student Class Progress rows
+  const { error: progressError } = await supabase
+    .from("Student Class Progress")
+    .delete()
+    .eq("student_ID", student_id);
+
+  if (progressError) {
+    console.error("Error deleting progress:", progressError);
+    return res.status(500).json({ error: "Failed to delete progress data." });
+  }
+
+  // 3. Delete the Student row itself
+  const { error: deleteError } = await supabase
+    .from("Student")
+    .delete()
+    .eq("id", student_id);
+
+  if (deleteError) {
+    console.error("Error deleting student:", deleteError);
+    return res.status(500).json({ error: "Failed to delete student." });
+  }
+
+  // 4. Optionally: delete user from Supabase Auth too
+  // await supabase.auth.admin.deleteUser(user.id);
+
+  return res.status(200).json({
+    message: "Account deleted successfully.",
+    student_id,
+  });
+});
+
+
 module.exports = {
   updateUser,
   setName,
   getProgress,
   saveSession,
   updateGrades,
+  updateProfileInformation,
+  deleteAccount
 };

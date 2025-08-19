@@ -1,5 +1,4 @@
 const asyncHandler = require("express-async-handler");
-require("dotenv").config();
 const nodemailer = require("nodemailer");
 
 

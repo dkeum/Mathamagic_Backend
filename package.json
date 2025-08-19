@@ -18,16 +18,21 @@
     "@azure-rest/ai-inference": "^1.0.0-beta.6",
     "@azure/core-auth": "^1.9.0",
     "@azure/core-sse": "latest",
+    "@dynamicpdf/api": "^2.0.0",
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.52.1",
+    "axios": "^1.11.0",
     "body-parser": "^2.2.0",
+    "canvas": "^3.1.2",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^17.0.0",
     "express": "^5.1.0",
     "express-async-handler": "^1.2.0",
     "morgan": "^1.10.1",
+    "multer": "^2.0.2",
     "nodemailer": "^7.0.3",
-    "react-math-keyboard": "^2.0.6"
+    "react-math-keyboard": "^2.0.6",
+    "uuid": "^11.1.0"
   }
 }

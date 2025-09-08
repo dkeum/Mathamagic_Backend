@@ -23,21 +23,21 @@ if (process.env.NODE_ENV !== "DEVELOPMENT") {
     res.sendStatus(204)
   );
   router.options("/homework-help/upload-image", (req, res) =>
-  res.sendStatus(204)
-);
+    res.sendStatus(204)
+  );
 }
 
 // Actual route handler
-router.post(
-  "/homework-help/upload-pdf",
-  homeworkHelpController.uploadMiddleware,
-  homeworkHelpController.uploadPdf
-);
+// router.post(
+//   "/homework-help/upload-pdf",
+//   homeworkHelpController.uploadMiddleware,
+//   homeworkHelpController.uploadPdf
+// );
 
-router.post(
-  "/homework-help/upload-image",
-  homeworkHelpController.uploadMiddleware,
-  homeworkHelpController.uploadImage
-);
+// router.post(
+//   "/homework-help/upload-image",
+//   homeworkHelpController.uploadMiddleware,
+//   homeworkHelpController.uploadImage
+// );
 
 module.exports = router;

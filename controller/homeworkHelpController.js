@@ -3,160 +3,175 @@ const supabase = require("../config/supabaseClient");
 const multer = require("multer");
 const axios = require("axios");
 const { v4: uuidv4 } = require("uuid"); // import uuid
-const { PdfImage, PdfResource, PngImageFormat } = require("@dynamicpdf/api");
 const path = require("path");
 const os = require("os");
+const FormData = require("form-data");
 
 
-// // Disk storage in /tmp
-// const storage = multer.diskStorage({
-//   destination: function (req, file, cb) {
-//     cb(null, path.join(os.tmpdir(), "uploads")); // temp folder
-//   },
-//   filename: function (req, file, cb) {
-//     cb(null, `${Date.now()}-${file.originalname}`);
-//   },
-// });
+// Disk storage in /tmp
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, path.join(os.tmpdir(), "uploads")); // temp folder
+  },
+  filename: function (req, file, cb) {
+    cb(null, `${Date.now()}-${file.originalname}`);
+  },
+});
 
-// const upload = multer({ storage });
-// const uploadMiddleware = upload.single("file");
+const upload = multer({ storage });
+const uploadMiddleware = upload.single("file");
 
-// // @ POST
-// // ROUTE: /homework-help/upload-pdf
-// const uploadPdf = asyncHandler(async (req, res) => {
-//   const token = req.cookies?.access_token;
+// @ POST
+// ROUTE: /homework-help/upload-pdf
+const asyncHandler = require("express-async-handler");
+const supabase = require("../config/supabaseClient");
+const axios = require("axios");
+const { v4: uuidv4 } = require("uuid");
 
-//   if (!token) {
-//     return res.status(401).json({ error: "Missing or invalid token." });
-//   }
+// @ POST
+// ROUTE: /homework-help/upload-pdf
+const asyncHandler = require("express-async-handler");
+const supabase = require("../config/supabaseClient");
+const axios = require("axios");
+const FormData = require("form-data");
+const { v4: uuidv4 } = require("uuid");
 
-//   // Verify token
-//   const {
-//     data: { user },
-//     error: userError,
-//   } = await supabase.auth.getUser(token);
+// @ POST
+// ROUTE: /homework-help/upload-pdf
+const uploadPdf = asyncHandler(async (req, res) => {
+  const token = req.cookies?.access_token;
 
-//   if (userError || !user) {
-//     return res.status(401).json({ error: "Unauthorized user." });
-//   }
+  if (!token) {
+    return res.status(401).json({ error: "Missing or invalid token." });
+  }
 
-//   if (!req.file) {
-//     return res.status(400).json({ error: "No file uploaded." });
-//   }
+  // Verify token
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser(token);
 
-//   try {
-//     const githubUrls = [];
+  if (userError || !user) {
+    return res.status(401).json({ error: "Unauthorized user." });
+  }
 
-//     // Use DynamicPDF to convert uploaded PDF buffer into images
-//     const pdfResource = new PdfResource(req.file.buffer);
-//     const pdfImage = new PdfImage(pdfResource);
-//     pdfImage.apiKey = process.env.DYNAMICPDF_API_KEY;
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded." });
+  }
 
-//     const pngImageFormat = new PngImageFormat();
-//     pdfImage.imageFormat = pngImageFormat;
+  try {
+    const githubUrls = [];
 
-//     const result = await pdfImage.process();
+    // Prepare multipart/form-data for DynamicPDF
+    const form = new FormData();
+    form.append("pdf", req.file.buffer, {
+      filename: req.file.originalname || "file.pdf",
+      contentType: req.file.mimetype || "application/pdf",
+    });
 
-//     if (!result.isSuccessful) {
-//       console.error("DynamicPDF error:", result.errorJson);
-//       return res.status(500).json({ error: "Failed to convert PDF." });
-//     }
+    // Call DynamicPDF REST API
+    const dynamicPdfResponse = await axios.post(
+      "https://api.dpdf.io/v1.0/pdf-image",
+      form,
+      {
+        headers: {
+          ...form.getHeaders(),
+          Authorization: `Bearer ${process.env.DYNAMICPDF_API_KEY}`,
+        },
+        responseType: "arraybuffer", // API returns PNG bytes
+      }
+    );
 
-//     // Iterate through all pages/images
-//     for (let i = 0; i < result.images.length; i++) {
-//       const image = result.images[i];
+    // Convert returned PNG bytes to base64
+    const base64Image = Buffer.from(dynamicPdfResponse.data).toString("base64");
 
-//       const uniqueFilename = `${uuidv4()}.png`;
+    // Upload the PNG to GitHub
+    const uniqueFilename = `${uuidv4()}.png`;
+    const response = await axios.put(
+      `https://api.github.com/repos/${process.env.GITHUB_REPO}/contents/uploads/${uniqueFilename}`,
+      {
+        message: `Upload PDF page`,
+        content: base64Image,
+        branch: process.env.GITHUB_BRANCH || "main",
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+          Accept: "application/vnd.github.v3+json",
+        },
+      }
+    );
 
-//       // Upload each PNG page to GitHub
-//       const response = await axios.put(
-//         `https://api.github.com/repos/${process.env.GITHUB_REPO}/contents/uploads/${uniqueFilename}`,
-//         {
-//           message: `Upload PDF page ${i + 1}`,
-//           content: image.data, // already base64 from DynamicPDF
-//           branch: process.env.GITHUB_BRANCH || "main",
-//         },
-//         {
-//           headers: {
-//             Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-//             Accept: "application/vnd.github.v3+json",
-//           },
-//         }
-//       );
+    githubUrls.push(response.data.content.download_url);
 
-//       // console.log(response.data.content.download_url)
+    return res.status(200).json({
+      message: "PDF uploaded and converted successfully",
+      githubUrls,
+    });
+  } catch (error) {
+    console.error("PDF upload error:", error.response?.data || error.message);
+    return res.status(500).json({ error: "Failed to upload PDF." });
+  }
+});
 
-//       githubUrls.push(response.data.content.download_url);
-//     }
+// @ POST
+// ROUTE: /homework-help/upload-image
+const uploadImage = asyncHandler(async (req, res) => {
+  const token = req.cookies?.access_token;
 
-//     return res.status(200).json({
-//       message: "PDF pages uploaded successfully",
-//       githubUrls,
-//     });
-//   } catch (error) {
-//     console.error("PDF upload error:", error.response?.data || error.message);
-//     return res.status(500).json({ error: "Failed to upload PDF pages." });
-//   }
-// });
+  if (!token) {
+    return res.status(401).json({ error: "Missing or invalid token." });
+  }
 
-// // @ POST
-// // ROUTE: /homework-help/upload-image
-// const uploadImage = asyncHandler(async (req, res) => {
-//   const token = req.cookies?.access_token;
+  // Verify token
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser(token);
 
-//   if (!token) {
-//     return res.status(401).json({ error: "Missing or invalid token." });
-//   }
+  if (userError || !user) {
+    return res.status(401).json({ error: "Unauthorized user." });
+  }
+  // console.log("upload image is called")
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded." });
+  }
 
-//   // Verify token
-//   const {
-//     data: { user },
-//     error: userError,
-//   } = await supabase.auth.getUser(token);
+  try {
+    const uniqueFilename = `${uuidv4()}.png`;
 
-//   if (userError || !user) {
-//     return res.status(401).json({ error: "Unauthorized user." });
-//   }
-//   // console.log("upload image is called")
-//   if (!req.file) {
-//     return res.status(400).json({ error: "No file uploaded." });
-//   }
+    // Convert buffer -> base64
+    const base64Image = req.file.buffer.toString("base64");
 
-//   try {
-//     const uniqueFilename = `${uuidv4()}.png`;
+    // Upload image to GitHub
+    const response = await axios.put(
+      `https://api.github.com/repos/${process.env.GITHUB_REPO}/contents/uploads/${uniqueFilename}`,
+      {
+        message: `Upload image ${uniqueFilename}`,
+        content: base64Image,
+        branch: process.env.GITHUB_BRANCH || "main",
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+          Accept: "application/vnd.github.v3+json",
+        },
+      }
+    );
 
-//     // Convert buffer -> base64
-//     const base64Image = req.file.buffer.toString("base64");
+    // console.log(response.data.content.download_url);
+    return res.status(200).json({
+      message: "Image uploaded successfully",
+      githubUrls: [response.data.content.download_url], // ✅ only one image
+    });
+  } catch (error) {
+    console.error("Image upload error:", error.response?.data || error.message);
+    return res.status(500).json({ error: "Failed to upload image." });
+  }
+});
 
-//     // Upload image to GitHub
-//     const response = await axios.put(
-//       `https://api.github.com/repos/${process.env.GITHUB_REPO}/contents/uploads/${uniqueFilename}`,
-//       {
-//         message: `Upload image ${uniqueFilename}`,
-//         content: base64Image,
-//         branch: process.env.GITHUB_BRANCH || "main",
-//       },
-//       {
-//         headers: {
-//           Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-//           Accept: "application/vnd.github.v3+json",
-//         },
-//       }
-//     );
-
-//     // console.log(response.data.content.download_url);
-//     return res.status(200).json({
-//       message: "Image uploaded successfully",
-//       githubUrls: [response.data.content.download_url], // ✅ only one image
-//     });
-//   } catch (error) {
-//     console.error("Image upload error:", error.response?.data || error.message);
-//     return res.status(500).json({ error: "Failed to upload image." });
-//   }
-// });
-
-// module.exports = {
-//   uploadPdf,
-//   uploadMiddleware,
-//   uploadImage,
-// };
+module.exports = {
+  uploadPdf,
+  uploadMiddleware,
+  uploadImage,
+};

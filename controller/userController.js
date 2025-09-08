@@ -160,7 +160,7 @@ const getProgress = asyncHandler(async (req, res) => {
   const time_logged = studentData.time_logged;
   let completion_progress = 0;
   const timeCommitment = studentData.time_commitment;
-  const profile_picture = studentData?.profile_picture
+  const profile_picture = studentData?.profile_picture;
   let time_goal_met = 0;
 
   let github_activity = [];
@@ -203,11 +203,11 @@ const getProgress = asyncHandler(async (req, res) => {
     const addedDates = new Set();
     for (const date in groupedByDate) {
       const times = groupedByDate[date].sort((a, b) => a - b);
-    
+
       for (let i = 0; i < times.length - 1; i++) {
         const diffMs = times[i + 1] - times[i];
         const diffHours = diffMs / (1000 * 60 * 60);
-    
+
         let level = 1; // default
         if (diffHours < 3) {
           level = 2;
@@ -216,7 +216,7 @@ const getProgress = asyncHandler(async (req, res) => {
         } else if (diffHours > 6) {
           level = 4;
         }
-    
+
         if (!addedDates.has(date)) {
           github_activity.push({
             date: date,
@@ -251,6 +251,17 @@ const getProgress = asyncHandler(async (req, res) => {
   // console.log("Here's the progress data");
   // console.log(progressData);
 
+  // go through this progressData and if there's a topic with any section missing then iterate through the sections
+  // 1. Detect topics with empty sections
+  const emptyTopics =
+    progressData?.topic_section_progress?.filter(
+      (topic) => !topic.sections || topic.sections.length === 0
+    ) || [];
+
+  let updatedProgressArray = progressData
+    ? [...progressData.topic_section_progress]
+    : [];
+
   let progressArray = [];
   let current_grade = 0;
 
@@ -271,8 +282,8 @@ const getProgress = asyncHandler(async (req, res) => {
 
     const classId = classData.id;
 
-    console.log("printing the found className");
-    console.log(classData.id);
+    // console.log("printing the found className");
+    // console.log(classData.id);
 
     // 3b. Get all topics for the class
     const { data: topics, error: topicError } = await supabase
@@ -334,7 +345,72 @@ const getProgress = asyncHandler(async (req, res) => {
       ]);
     // console.log(insertError)
   } else {
-    progressArray = progressData.topic_section_progress;
+    // 2. Only proceed if there are empty topics
+    if (emptyTopics.length > 0) {
+      // Get all topic names that are empty
+      const emptyTopicNames = emptyTopics.map((t) => t.topic_name);
+
+      // Fetch topic IDs from Supabase
+      const { data: topics, error: topicError } = await supabase
+        .from("Topic")
+        .select("id, name, class_ID")
+        .in("name", emptyTopicNames);
+
+      if (topicError || !topics) {
+        console.error("Error fetching topics:", topicError);
+      } else {
+        const topicIds = topics.map((t) => t.id);
+
+        // Fetch sections for these topic IDs
+        const { data: sections, error: sectionError } = await supabase
+          .from("Section")
+          .select("id, name, topic_ID")
+          .in("topic_ID", topicIds);
+
+        if (sectionError || !sections) {
+          console.error("Error fetching sections:", sectionError);
+        } else {
+          // Replace empty sections with actual sections
+          for (const topic of topics) {
+            const topicSections = sections
+              .filter((sec) => sec.topic_ID === topic.id)
+              .map((sec) => ({
+                section_name: sec.name,
+                section_id: sec.id,
+                progress: 0,
+              }));
+
+            // Find the topic in updatedProgressArray and replace sections
+            const index = updatedProgressArray.findIndex(
+              (t) => t.topic_name === topic.name
+            );
+
+            if (index !== -1) {
+              updatedProgressArray[index].sections = topicSections;
+            } else {
+              // If topic not found, add it
+              updatedProgressArray.push({
+                topic_name: topic.name,
+                sections: topicSections,
+              });
+            }
+          }
+
+          // 3. Update the Student Class Progress row
+          const { error: updateError } = await supabase
+            .from("Student Class Progress")
+            .update({ topic_section_progress: updatedProgressArray })
+            .eq("student_ID", studentId);
+
+          if (updateError) {
+            console.error("Error updating progress:", updateError);
+          } else {
+            console.log("Empty sections filled successfully!");
+          }
+        }
+      }
+    }
+    progressArray = updatedProgressArray;
     let count = 0;
     let section_progress = 0;
     let temp_score = 0;
@@ -381,7 +457,7 @@ const getProgress = asyncHandler(async (req, res) => {
     progressArray,
     timeCommitment: time_goal_met,
     actual_time_commitment: timeCommitment,
-    profile_picture
+    profile_picture,
   });
 });
 
@@ -517,7 +593,7 @@ const updateProfileInformation = asyncHandler(async (req, res) => {
   }
 
   const email = user.email;
-  const { name } = req.body;  // ✅ now works because Multer parses it
+  const { name } = req.body; // ✅ now works because Multer parses it
   let picture_url = null;
 
   if (req.file) {
@@ -565,8 +641,6 @@ const updateProfileInformation = asyncHandler(async (req, res) => {
     student: data[0],
   });
 });
-
-
 
 // @ DELETE
 // ROUTE: /delete-account
@@ -632,7 +706,6 @@ const deleteAccount = asyncHandler(async (req, res) => {
   });
 });
 
-
 module.exports = {
   updateUser,
   setName,
@@ -640,5 +713,5 @@ module.exports = {
   saveSession,
   updateGrades,
   updateProfileInformation,
-  deleteAccount
+  deleteAccount,
 };

@@ -99,7 +99,7 @@ const login = asyncHandler(async (req, res) => {
     res.cookie("access_token", data.session.access_token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      sameSite: process.env.NODE_ENV === "DEVELOPMENT" ? "lax" :"none",
       maxAge: 60 * 60 * 24 * 1000, // 1 day in ms
     });
 

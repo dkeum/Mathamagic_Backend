@@ -27,7 +27,7 @@ app.use(cookieParser());
 app.use(express.json());
 const PORT = 3000;
 
-// app.use("/", require("./routes/publicAPI/contactRoute"));
+app.use("/", require("./routes/publicAPI/contactRoute"));
 // app.use("/", require("./routes/authRoute"));
 // app.use("/", require("./routes/userRoute"))
 // app.use("/", require("./routes/questionRoute"))

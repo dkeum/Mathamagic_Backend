@@ -1,11 +1,11 @@
 const asyncHandler = require("express-async-handler");
 const supabase = require("../config/supabaseClient");
-const multer = require("multer");
-const axios = require("axios");
-const { v4: uuidv4 } = require("uuid"); // import uuid
-const { PdfImage, PdfResource, PngImageFormat } = require("@dynamicpdf/api");
-const path = require("path");
-const os = require("os");
+// const multer = require("multer");
+// const axios = require("axios");
+// const { v4: uuidv4 } = require("uuid"); // import uuid
+// const { PdfImage, PdfResource, PngImageFormat } = require("@dynamicpdf/api");
+// const path = require("path");
+// const os = require("os");
 
 
 // // Disk storage in /tmp

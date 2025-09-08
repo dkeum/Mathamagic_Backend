@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 
-// const homeworkHelpController = require("../controller/homeworkHelpController");
+const homeworkHelpController = require("../controller/homeworkHelpController");
 
 // // Only apply CORS headers and OPTIONS handlers in non-development environments
 // if (process.env.NODE_ENV !== "DEVELOPMENT") {

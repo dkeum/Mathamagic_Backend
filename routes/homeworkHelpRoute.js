@@ -34,10 +34,10 @@ if (process.env.NODE_ENV !== "DEVELOPMENT") {
 //   homeworkHelpController.uploadPdf
 // );
 
-// router.post(
-//   "/homework-help/upload-image",
-//   homeworkHelpController.uploadMiddleware,
-//   homeworkHelpController.uploadImage
-// );
+router.post(
+  "/homework-help/upload-image",
+  homeworkHelpController.uploadMiddleware,
+  homeworkHelpController.uploadImage
+);
 
 module.exports = router;

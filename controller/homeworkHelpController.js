@@ -23,21 +23,6 @@ const uploadMiddleware = upload.single("file");
 
 // @ POST
 // ROUTE: /homework-help/upload-pdf
-const asyncHandler = require("express-async-handler");
-const supabase = require("../config/supabaseClient");
-const axios = require("axios");
-const { v4: uuidv4 } = require("uuid");
-
-// @ POST
-// ROUTE: /homework-help/upload-pdf
-const asyncHandler = require("express-async-handler");
-const supabase = require("../config/supabaseClient");
-const axios = require("axios");
-const FormData = require("form-data");
-const { v4: uuidv4 } = require("uuid");
-
-// @ POST
-// ROUTE: /homework-help/upload-pdf
 const uploadPdf = asyncHandler(async (req, res) => {
   const token = req.cookies?.access_token;
 

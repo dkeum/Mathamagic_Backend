@@ -18,7 +18,11 @@ if (process.env.NODE_ENV !== "DEVELOPMENT") {
 
   // OPTIONS handler for preflight requests
   router.options("/questions/:topic/:section", (req, res) => res.sendStatus(204));
-z
+  router.options("/questions/save-marks", (req, res) => res.sendStatus(204));
+  router.options("/questions/get-questions", (req, res) => res.sendStatus(204));
+  router.options("/questions/fix-questions", (req, res) => res.sendStatus(204));
+  router.options("/questions/fixed-mistakes", (req, res) => res.sendStatus(204));
+
 }
 
 // Actual route handler

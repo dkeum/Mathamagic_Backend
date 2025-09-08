@@ -30,7 +30,7 @@ const PORT = 3000;
 app.use("/", require("./routes/publicAPI/contactRoute"));
 app.use("/", require("./routes/authRoute")); // Good for Serverless function
 app.use("/", require("./routes/userRoute"))
-// app.use("/", require("./routes/questionRoute"))
+app.use("/", require("./routes/questionRoute"))
 // app.use("/", require("./routes/homeworkHelpRoute"))
 
 

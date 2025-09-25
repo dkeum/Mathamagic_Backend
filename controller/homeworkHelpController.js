@@ -2,22 +2,11 @@ const asyncHandler = require("express-async-handler");
 const supabase = require("../config/supabaseClient");
 const multer = require("multer");
 const axios = require("axios");
-const { v4: uuidv4 } = require("uuid"); // import uuid
-const path = require("path");
-const os = require("os");
+const { v4: uuidv4 } = require("uuid");
 const FormData = require("form-data");
 
-
-// Disk storage in /tmp
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, path.join(os.tmpdir(), "uploads")); // temp folder
-  },
-  filename: function (req, file, cb) {
-    cb(null, `${Date.now()}-${file.originalname}`);
-  },
-});
-
+// ✅ Use memory storage for serverless
+const storage = multer.memoryStorage();
 const upload = multer({ storage });
 const uploadMiddleware = upload.single("file");
 
@@ -25,24 +14,16 @@ const uploadMiddleware = upload.single("file");
 // ROUTE: /homework-help/upload-pdf
 const uploadPdf = asyncHandler(async (req, res) => {
   const token = req.cookies?.access_token;
+  if (!token) return res.status(401).json({ error: "Missing or invalid token." });
 
-  if (!token) {
-    return res.status(401).json({ error: "Missing or invalid token." });
-  }
-
-  // Verify token
+  // Verify user
   const {
     data: { user },
     error: userError,
   } = await supabase.auth.getUser(token);
 
-  if (userError || !user) {
-    return res.status(401).json({ error: "Unauthorized user." });
-  }
-
-  if (!req.file) {
-    return res.status(400).json({ error: "No file uploaded." });
-  }
+  if (userError || !user) return res.status(401).json({ error: "Unauthorized user." });
+  if (!req.file) return res.status(400).json({ error: "No file uploaded." });
 
   try {
     const githubUrls = [];
@@ -63,14 +44,14 @@ const uploadPdf = asyncHandler(async (req, res) => {
           ...form.getHeaders(),
           Authorization: `Bearer ${process.env.DYNAMICPDF_API_KEY}`,
         },
-        responseType: "arraybuffer", // API returns PNG bytes
+        responseType: "arraybuffer",
       }
     );
 
     // Convert returned PNG bytes to base64
     const base64Image = Buffer.from(dynamicPdfResponse.data).toString("base64");
 
-    // Upload the PNG to GitHub
+    // Upload to GitHub
     const uniqueFilename = `${uuidv4()}.png`;
     const response = await axios.put(
       `https://api.github.com/repos/${process.env.GITHUB_REPO}/contents/uploads/${uniqueFilename}`,
@@ -103,24 +84,16 @@ const uploadPdf = asyncHandler(async (req, res) => {
 // ROUTE: /homework-help/upload-image
 const uploadImage = asyncHandler(async (req, res) => {
   const token = req.cookies?.access_token;
+  if (!token) return res.status(401).json({ error: "Missing or invalid token." });
 
-  if (!token) {
-    return res.status(401).json({ error: "Missing or invalid token." });
-  }
-
-  // Verify token
+  // Verify user
   const {
     data: { user },
     error: userError,
   } = await supabase.auth.getUser(token);
 
-  if (userError || !user) {
-    return res.status(401).json({ error: "Unauthorized user." });
-  }
-  // console.log("upload image is called")
-  if (!req.file) {
-    return res.status(400).json({ error: "No file uploaded." });
-  }
+  if (userError || !user) return res.status(401).json({ error: "Unauthorized user." });
+  if (!req.file) return res.status(400).json({ error: "No file uploaded." });
 
   try {
     const uniqueFilename = `${uuidv4()}.png`;
@@ -128,7 +101,7 @@ const uploadImage = asyncHandler(async (req, res) => {
     // Convert buffer -> base64
     const base64Image = req.file.buffer.toString("base64");
 
-    // Upload image to GitHub
+    // Upload to GitHub
     const response = await axios.put(
       `https://api.github.com/repos/${process.env.GITHUB_REPO}/contents/uploads/${uniqueFilename}`,
       {
@@ -144,10 +117,9 @@ const uploadImage = asyncHandler(async (req, res) => {
       }
     );
 
-    // console.log(response.data.content.download_url);
     return res.status(200).json({
       message: "Image uploaded successfully",
-      githubUrls: [response.data.content.download_url], // ✅ only one image
+      githubUrls: [response.data.content.download_url],
     });
   } catch (error) {
     console.error("Image upload error:", error.response?.data || error.message);

@@ -79,7 +79,7 @@ const login = asyncHandler(async (req, res) => {
     if (existingStudent === null) {
       const { data: newStudent, error: insertError } = await supabase
         .from("Student") // <- corrected table name to "Students"
-        .insert([{ email: userEmail , id}])
+        .insert([{ email: userEmail, id }])
         .select()
         .single(); // immediately get inserted row
 
@@ -99,7 +99,7 @@ const login = asyncHandler(async (req, res) => {
     res.cookie("access_token", data.session.access_token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "DEVELOPMENT" ? "lax" :"none",
+      sameSite: process.env.NODE_ENV === "DEVELOPMENT" ? "lax" : "none",
       maxAge: 60 * 60 * 24 * 1000, // 1 day in ms
     });
 
@@ -108,6 +108,8 @@ const login = asyncHandler(async (req, res) => {
       message: "Login successful",
       user: data.user,
       student: studentData,
+      access_token: data.session.access_token,   // 👈 add
+      refresh_token: data.session.refresh_token, // 👈 add
     });
   } catch (err) {
     console.error("Login error:", err);

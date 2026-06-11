@@ -1,7 +1,6 @@
 const express = require("express");
 const router = express.Router();
-
-const stripeWebhookController = require("../controller/stripeWebHookController");
+const stripeWebhookController = require("../controller/stripewebhookhandler");
 
 // ── Webhook ──────────────────────────────────────────────────
 // MUST be before express.json() middleware — Stripe needs the raw body
@@ -9,7 +8,7 @@ const stripeWebhookController = require("../controller/stripeWebHookController")
 // app.use("/payment/webhook", express.raw({ type: "application/json" }))
 router.post(
     "/payment/webhook",
-    stripeWebhookController.stripeWebhookHandler
+    stripeWebhookController.stripewebhookhandler
 );
 
 

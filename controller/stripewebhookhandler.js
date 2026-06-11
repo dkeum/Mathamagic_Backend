@@ -18,7 +18,7 @@ const PLAN_AI_CREDITS = {
     free:                0,
 };
 
-const stripeWebhookHandler = asyncHandler(async (req, res) => {
+const stripewebhookhandler = asyncHandler(async (req, res) => {
     const sig           = req.headers["stripe-signature"];
     const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
@@ -223,7 +223,7 @@ async function findUserIdBySubscriptionId(subscriptionId) {
 }
 
 module.exports = {
-    stripeWebhookHandler,
+    stripewebhookhandler,
     upsertSubscription,
     revokeSubscription,
     findUserIdBySubscriptionId,

@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 
-const stripeWebhookController = require("../controller/stripeWebhookController");
+const stripeWebhookController = require("../controller/stripeWebHookController");
 
 // ── Webhook ──────────────────────────────────────────────────
 // MUST be before express.json() middleware — Stripe needs the raw body

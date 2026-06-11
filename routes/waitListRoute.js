@@ -31,4 +31,6 @@ router.post("/join", waitlistController.joinWaitlist);
 router.get("/stats", waitlistController.getStats);
 router.get("/leaderboard", waitlistController.getLeaderboard);
 
+//EDIT
+
 module.exports = router;

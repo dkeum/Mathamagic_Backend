@@ -3,7 +3,7 @@ const multer = require("multer");
 
 const router = express.Router();
 const upload = multer(); // memory storage (keeps file in req.file.buffer)
-const waitlistController = require("../controller/waitlistController");
+const waitlistController = require("../controller/waitListController");
 
 // Only apply CORS headers and OPTIONS handlers in non-development environments
 if (process.env.NODE_ENV !== "DEVELOPMENT") {

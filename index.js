@@ -55,7 +55,7 @@ app.use("/", require("./routes/userRoute"))
 app.use("/", require("./routes/questionRoute"))
 app.use("/", require("./routes/homeworkHelpRoute"))
 app.use("/", require("./routes/stripeRoute"))
-app.use("/api/waitlist", require("./routes/WaitList")); // Linked to external controller for clean separation of concerns
+app.use("/api/waitlist", require("./routes/waitListRoute")); // Linked to external controller for clean separation of concerns
 
 
 

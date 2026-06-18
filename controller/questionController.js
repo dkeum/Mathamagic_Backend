@@ -6,8 +6,6 @@ const supabase = require("../config/supabaseClient");
 
 //SEND an send email with with full name and description
 const getQuestions = asyncHandler(async (req, res) => {
-  // console.log("called get questions");
-
   const { topic, section } = req.params;
   const token = req.cookies?.access_token;
 
@@ -15,11 +13,7 @@ const getQuestions = asyncHandler(async (req, res) => {
     return res.status(401).json({ error: "Missing or invalid token." });
   }
 
-  // Verify token
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser(token);
+  const { data: { user }, error: userError } = await supabase.auth.getUser(token);
   if (userError || !user) {
     return res.status(401).json({ error: "Unauthorized user." });
   }
@@ -34,60 +28,71 @@ const getQuestions = asyncHandler(async (req, res) => {
   if (topicError || !topicData) {
     return res.status(404).json({ error: "Topic not found." });
   }
-  const topic_ID = topicData.id;
 
-  // console.log(topic_ID, section);
-
-  // Get section data
+  // Get section
   const { data: sectionData, error: sectionError } = await supabase
     .from("Section")
-    .select("*")
+    .select("id")
     .eq("name", section)
+    .eq("topic_ID", topicData.id)
     .single();
 
-  // console.log(sectionData);
-  // console.log(sectionError);
+
+
+    console.log(sectionData)
+
 
   if (sectionError || !sectionData) {
     return res.status(404).json({ error: "Section not found." });
   }
 
-  const question_list = sectionData.questions || [];
-  const limitedQuestions = question_list.slice(0, 10);
+  // Get question IDs from join table, ordered by position
+  const { data: sectionQuestions, error: sqError } = await supabase
+    .from("section_question")
+    .select("question_id")
+    .eq("section_id", sectionData.id)
+    .order("position", { ascending: true })
+    .limit(10);
+
+    console.log(sectionQuestions)
+
+  if (sqError || !sectionQuestions?.length) {
+    return res.status(404).json({ error: "No questions found for this section." });
+  }
+
+  const questionIds = sectionQuestions.map((sq) => sq.question_id);
 
   // Get questions
   const { data: questionData, error: questionError } = await supabase
     .from("question")
     .select("*")
-    .in("id", limitedQuestions);
+    .in("id", questionIds);
 
   if (questionError) {
     return res.status(500).json({ error: "Error fetching questions." });
   }
 
-  // console.log("got questions")
-
   // Get answers
   const { data: answerData, error: answerError } = await supabase
     .from("answer")
     .select("*")
-    .in("question_ID", limitedQuestions);
-
-  // console.log(answerData)
+    .in("question_ID", questionIds);
 
   if (answerError) {
     return res.status(500).json({ error: "Error fetching answers." });
   }
 
-  // Merge questions and answers
-  const merged = questionData.map((q) => ({
-    ...q,
-    answers: answerData.filter((a) => a.question_ID === q.id),
-  }));
+  // Merge and preserve section order
+  const questionMap = new Map(questionData.map((q) => [q.id, q]));
+  const merged = questionIds
+    .map((id) => {
+      const q = questionMap.get(id);
+      if (!q) return null;
+      return { ...q, answers: answerData.filter((a) => a.question_ID === q.id) };
+    })
+    .filter(Boolean);
 
-  return res.status(200).json({
-    questions: merged,
-  });
+  return res.status(200).json({ questions: merged });
 });
 
 // @ POST

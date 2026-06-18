@@ -167,10 +167,10 @@ const getProgress = asyncHandler(async (req, res) => {
   let classId = classIdFromDb;
 
   // ── Subscription fields ──────────────────────────────────────
-  const now          = new Date();
-  const trialEndDate = trial_end        ? new Date(trial_end)        : null;
-  const subEndDate   = subscription_end ? new Date(subscription_end) : null;
-  const is_on_trial  = Boolean(had_trial && trialEndDate && trialEndDate > now);
+  const now = new Date();
+  const trialEndDate = trial_end ? new Date(trial_end) : null;
+  const subEndDate = subscription_end ? new Date(subscription_end) : null;
+  const is_on_trial = Boolean(had_trial && trialEndDate && trialEndDate > now);
 
   let days_remaining = 0;
   if (is_on_trial && trialEndDate) {
@@ -225,8 +225,8 @@ const getProgress = asyncHandler(async (req, res) => {
   ]);
 
   // ── Sessions ─────────────────────────────────────────────────
-  let github_activity      = [];
-  let time_goal_met        = 0;
+  let github_activity = [];
+  let time_goal_met = 0;
   let total_minutes_logged = 0;
 
   const date200DaysAgo = new Date();
@@ -234,21 +234,21 @@ const getProgress = asyncHandler(async (req, res) => {
   github_activity.push({ date: date200DaysAgo.toISOString().slice(0, 10), count: 0, level: 0 });
 
   if (!sessions || sessions.length === 0) {
-    const today        = new Date();
+    const today = new Date();
     const twoMonthsAgo = new Date();
     twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
     twoMonthsAgo.setDate(twoMonthsAgo.getDate() - 20);
 
     github_activity = [
       { date: twoMonthsAgo.toISOString().slice(0, 10), count: 1, level: 1 },
-      { date: today.toISOString().slice(0, 10),        count: 1, level: 1 },
+      { date: today.toISOString().slice(0, 10), count: 1, level: 1 },
     ];
 
     await supabase.from("student_session").insert({
       student_ID: studentId,
       start_time: today.toISOString(),
-      end_time:   today.toISOString(),
-      timezone:   Intl.DateTimeFormat().resolvedOptions().timeZone,
+      end_time: today.toISOString(),
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     });
 
   } else {
@@ -260,15 +260,15 @@ const getProgress = asyncHandler(async (req, res) => {
     }
     for (const [date, totalMinutes] of Object.entries(groupedByDate)) {
       let level = 1;
-      if (totalMinutes >= 120)     level = 4;
+      if (totalMinutes >= 120) level = 4;
       else if (totalMinutes >= 60) level = 3;
       else if (totalMinutes >= 30) level = 2;
       github_activity.push({ date, count: 1, level });
     }
 
-    const oneWeekAgo        = new Date();
+    const oneWeekAgo = new Date();
     oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-    const weeklyMinutes     = sessions
+    const weeklyMinutes = sessions
       .filter(s => new Date(s.start_time) >= oneWeekAgo)
       .reduce((sum, s) => sum + parseFloat(s.duration_minutes || 0), 0);
     const weeklyGoalMinutes = (timeCommitment || 0) * 60;
@@ -279,6 +279,8 @@ const getProgress = asyncHandler(async (req, res) => {
     total_minutes_logged = sessions
       .reduce((sum, s) => sum + parseFloat(s.duration_minutes || 0), 0);
   }
+
+  // console.log("this is the classId ", classId)
 
   // ── Class fallback ───────────────────────────────────────────
   if (!classId) {
@@ -292,6 +294,9 @@ const getProgress = asyncHandler(async (req, res) => {
     }
     classId = 3;
   }
+
+
+  // console.log("this is the classId afterwards", classId)
 
   // ── Topics & Sections ────────────────────────────────────────
   const { data: topics, error: topicError } = await supabase
@@ -330,31 +335,31 @@ const getProgress = asyncHandler(async (req, res) => {
 
   // ── Current module ───────────────────────────────────────────
   const current_module = lastSection ? {
-    topic_name:        lastSection.Section?.Topic?.name ?? null,
-    topic_id:          lastSection.Section?.Topic?.id   ?? null,
-    section_name:      lastSection.Section?.name        ?? null,
-    section_id:        lastSection.section_id,
-    mastery_score:     parseFloat(lastSection.mastery_score || 0),
+    topic_name: lastSection.Section?.Topic?.name ?? null,
+    topic_id: lastSection.Section?.Topic?.id ?? null,
+    section_name: lastSection.Section?.name ?? null,
+    section_id: lastSection.section_id,
+    mastery_score: parseFloat(lastSection.mastery_score || 0),
     last_attempted_at: lastSection.last_attempted_at,
   } : null;
 
   // ── Build progressArray with topic mastery + section status ──
-  let total_sections       = 0;
-  let total_mastery        = 0;
+  let total_sections = 0;
+  let total_mastery = 0;
   let isFirstSectionGlobal = true;
 
   const progressArray = topics.map(topic => {
     const topicSections = sections.filter(sec => sec.topic_ID === topic.id);
-    const topicCount    = topicSections.length;
+    const topicCount = topicSections.length;
     let topicMasterySum = 0;
 
     const mappedSections = topicSections.map(sec => {
-      const p           = progressMap[sec.id];
-      const mastery     = p ? parseFloat(p.mastery_score) : 0;
+      const p = progressMap[sec.id];
+      const mastery = p ? parseFloat(p.mastery_score) : 0;
       const isCompleted = p?.completed ?? false;
 
-      total_sections  += 1;
-      total_mastery   += mastery;
+      total_sections += 1;
+      total_mastery += mastery;
       topicMasterySum += mastery;
 
       let status = "todo";
@@ -368,11 +373,11 @@ const getProgress = asyncHandler(async (req, res) => {
       isFirstSectionGlobal = false;
 
       return {
-        section_name:      sec.name,
-        section_id:        sec.id,
-        progress:          p ? (isCompleted ? 1 : mastery / 100) : 0,
-        latest_grade:      mastery,
-        completed:         isCompleted,
+        section_name: sec.name,
+        section_id: sec.id,
+        progress: p ? (isCompleted ? 1 : mastery / 100) : 0,
+        latest_grade: mastery,
+        completed: isCompleted,
         status,
         last_attempted_at: p?.last_attempted_at ?? null,
       };
@@ -383,9 +388,9 @@ const getProgress = asyncHandler(async (req, res) => {
       : 0;
 
     return {
-      topic_name:    topic.name,
+      topic_name: topic.name,
       topic_mastery,
-      sections:      mappedSections,
+      sections: mappedSections,
     };
   });
 
@@ -395,7 +400,7 @@ const getProgress = asyncHandler(async (req, res) => {
 
   if (!current_module && progressArray.length > 0) {
     hasActivityHistory = false;
-    const firstTopic   = progressArray[0];
+    const firstTopic = progressArray[0];
     finalProgressArray = [{
       ...firstTopic,
       sections: firstTopic.sections.slice(0, 4),
@@ -410,9 +415,9 @@ const getProgress = asyncHandler(async (req, res) => {
   let completion_progress, current_grade, time_logged_pct;
 
   if (cacheAgeMinutes < 60 && cached_overall_grade != null) {
-    current_grade       = cached_overall_grade;
+    current_grade = cached_overall_grade;
     completion_progress = cached_completion_pct;
-    time_logged_pct     = cached_total_minutes > 0 && (timeCommitment || 0) > 0
+    time_logged_pct = cached_total_minutes > 0 && (timeCommitment || 0) > 0
       ? Math.min(100, Math.round((cached_total_minutes / ((timeCommitment || 1) * 60)) * 100))
       : 0;
 
@@ -420,7 +425,7 @@ const getProgress = asyncHandler(async (req, res) => {
     completion_progress = total_sections > 0
       ? Math.round(total_mastery / total_sections)
       : 0;
-    current_grade   = completion_progress;
+    current_grade = completion_progress;
     time_logged_pct = (timeCommitment || 0) > 0
       ? Math.min(100, Math.round((total_minutes_logged / ((timeCommitment || 1) * 60)) * 100))
       : 0;
@@ -429,9 +434,9 @@ const getProgress = asyncHandler(async (req, res) => {
     supabase
       .from("Student")
       .update({
-        cached_overall_grade:  current_grade,
+        cached_overall_grade: current_grade,
         cached_completion_pct: completion_progress,
-        cached_total_minutes:  total_minutes_logged,
+        cached_total_minutes: total_minutes_logged,
         last_cache_updated_at: new Date().toISOString(),
       })
       .eq("id", studentId)
@@ -441,24 +446,27 @@ const getProgress = asyncHandler(async (req, res) => {
   }
 
   return res.status(200).json({
-    name:                   studentName         ?? "",
+
+    name: studentName ?? "",
     github_activity,
     current_grade,
     completion_progress,
     time_logged_pct,
     total_minutes_logged,
-    progressArray:          finalProgressArray,
+    progressArray: finalProgressArray,
     current_module,
     hasActivityHistory,
-    wrong_count:            wrong_count         ?? 0,  // ← feeds "12 Questions Wrong" card
-    timeCommitment:         time_goal_met,
+    wrong_count: wrong_count ?? 0,  // ← feeds "12 Questions Wrong" card
+    timeCommitment: time_goal_met,
     actual_time_commitment: timeCommitment,
     profile_picture,
     is_on_trial,
     days_remaining,
-    plan_type:              plan_type           ?? "free",
-    ai_credits:             AI_Credit           ?? 0,
-    subscription_status:    subscription_status ?? "inactive",
+    plan_type: plan_type ?? "free",
+    ai_credits: AI_Credit ?? 0,
+    subscription_status: subscription_status ?? "inactive",
+    class: className,
+    Class_ID: classIdFromDb,
   });
 });
 

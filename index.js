@@ -57,6 +57,8 @@ app.use("/", require("./routes/homeworkHelpRoute"))
 app.use("/", require("./routes/stripeRoute"))
 app.use("/api/waitlist", require("./routes/waitListRoute")); // Linked to external controller for clean separation of concerns
 app.use("/", require("./routes/practiceTopicRoute"))
+app.use("/", require("./routes/trackDataRoute"))
+app.use("/", require("./routes/finalExamRoute"))
 
 
 

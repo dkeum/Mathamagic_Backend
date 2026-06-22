@@ -121,22 +121,29 @@ const setName = asyncHandler(async (req, res) => {
 // ROUTE: /:user_email/getprofile
 const getProgress = asyncHandler(async (req, res) => {
   const token = req.cookies?.access_token;
-  if (!token) return res.status(401).json({ error: "Missing or invalid token." });
+  if (!token)
+    return res.status(401).json({ error: "Missing or invalid token." });
 
-  const { data: { user }, error: userError } = await supabase.auth.getUser(token);
-  if (userError || !user) return res.status(401).json({ error: "Unauthorized user." });
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser(token);
+  if (userError || !user)
+    return res.status(401).json({ error: "Unauthorized user." });
 
   const email = user.email;
 
   const { data: studentData, error: studentError } = await supabase
     .from("Student")
-    .select(`
+    .select(
+      `
       id, name, class, grade, time_commitment, profile_picture,
       AI_Credit, plan_type, isSubscribed, had_trial,
       trial_end, subscription_end, subscription_status, Class_ID,
       cached_overall_grade, cached_completion_pct,
       cached_total_minutes, last_cache_updated_at
-    `)
+    `
+    )
     .eq("email", email)
     .single();
 
@@ -174,37 +181,42 @@ const getProgress = asyncHandler(async (req, res) => {
 
   let days_remaining = 0;
   if (is_on_trial && trialEndDate) {
-    days_remaining = Math.max(0, Math.ceil((trialEndDate - now) / (1000 * 60 * 60 * 24)));
+    days_remaining = Math.max(
+      0,
+      Math.ceil((trialEndDate - now) / (1000 * 60 * 60 * 24))
+    );
   } else if (isSubscribed && subEndDate) {
-    days_remaining = Math.max(0, Math.ceil((subEndDate - now) / (1000 * 60 * 60 * 24)));
+    days_remaining = Math.max(
+      0,
+      Math.ceil((subEndDate - now) / (1000 * 60 * 60 * 24))
+    );
   }
 
   // ── Run independent queries in parallel ──────────────────────
-  const [
-    { data: sessions },
-    { count: wrong_count },
-    { data: lastSection },
-  ] = await Promise.all([
+  const [{ data: sessions }, { count: wrong_count }, { data: lastSection }] =
+    await Promise.all([
+      // Sessions for github activity + time tracking
+      supabase
+        .from("student_session")
+        .select("start_time, end_time, duration_minutes, timezone")
+        .eq("student_ID", studentId)
+        .order("start_time", { ascending: true }),
 
-    // Sessions for github activity + time tracking
-    supabase
-      .from("student_session")
-      .select("start_time, end_time, duration_minutes, timezone")
-      .eq("student_ID", studentId)
-      .order("start_time", { ascending: true }),
+      // Wrong unreviewed question count for dashboard card
+      // Fixed — only counts genuinely unresolved mistakes
+      supabase
+        .from("student_question_attempt")
+        .select("*", { count: "exact", head: true })
+        .eq("student_ID", studentId)
+        .eq("is_correct", false)
+        .eq("reviewed", false)
+        .is("corrected_at", null), // ← exclude corrected mistakes
 
-    // Wrong unreviewed question count for dashboard card
-    supabase
-      .from("student_question_attempt")
-      .select("*", { count: "exact", head: true })
-      .eq("student_ID", studentId)
-      .eq("is_correct", false)
-      .eq("reviewed", false),
-
-    // Last attempted section for current module
-    supabase
-      .from("student_section_progress")
-      .select(`
+      // Last attempted section for current module
+      supabase
+        .from("student_section_progress")
+        .select(
+          `
         section_id,
         mastery_score,
         last_attempted_at,
@@ -216,13 +228,14 @@ const getProgress = asyncHandler(async (req, res) => {
             name
           )
         )
-      `)
-      .eq("student_ID", studentId)
-      .not("last_attempted_at", "is", null)
-      .order("last_attempted_at", { ascending: false })
-      .limit(1)
-      .single(),
-  ]);
+      `
+        )
+        .eq("student_ID", studentId)
+        .not("last_attempted_at", "is", null)
+        .order("last_attempted_at", { ascending: false })
+        .limit(1)
+        .single(),
+    ]);
 
   // ── Sessions ─────────────────────────────────────────────────
   let github_activity = [];
@@ -231,7 +244,11 @@ const getProgress = asyncHandler(async (req, res) => {
 
   const date200DaysAgo = new Date();
   date200DaysAgo.setDate(date200DaysAgo.getDate() - 200);
-  github_activity.push({ date: date200DaysAgo.toISOString().slice(0, 10), count: 0, level: 0 });
+  github_activity.push({
+    date: date200DaysAgo.toISOString().slice(0, 10),
+    count: 0,
+    level: 0,
+  });
 
   if (!sessions || sessions.length === 0) {
     const today = new Date();
@@ -250,7 +267,6 @@ const getProgress = asyncHandler(async (req, res) => {
       end_time: today.toISOString(),
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     });
-
   } else {
     const groupedByDate = {};
     for (const session of sessions) {
@@ -269,15 +285,18 @@ const getProgress = asyncHandler(async (req, res) => {
     const oneWeekAgo = new Date();
     oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
     const weeklyMinutes = sessions
-      .filter(s => new Date(s.start_time) >= oneWeekAgo)
+      .filter((s) => new Date(s.start_time) >= oneWeekAgo)
       .reduce((sum, s) => sum + parseFloat(s.duration_minutes || 0), 0);
     const weeklyGoalMinutes = (timeCommitment || 0) * 60;
-    time_goal_met = weeklyGoalMinutes > 0
-      ? Math.min(100, Math.round((weeklyMinutes / weeklyGoalMinutes) * 100))
-      : 0;
+    time_goal_met =
+      weeklyGoalMinutes > 0
+        ? Math.min(100, Math.round((weeklyMinutes / weeklyGoalMinutes) * 100))
+        : 0;
 
-    total_minutes_logged = sessions
-      .reduce((sum, s) => sum + parseFloat(s.duration_minutes || 0), 0);
+    total_minutes_logged = sessions.reduce(
+      (sum, s) => sum + parseFloat(s.duration_minutes || 0),
+      0
+    );
   }
 
   // console.log("this is the classId ", classId)
@@ -295,7 +314,6 @@ const getProgress = asyncHandler(async (req, res) => {
     classId = 3;
   }
 
-
   // console.log("this is the classId afterwards", classId)
 
   // ── Topics & Sections ────────────────────────────────────────
@@ -308,7 +326,7 @@ const getProgress = asyncHandler(async (req, res) => {
     return res.status(404).json({ error: "No topics found for this class." });
   }
 
-  const topicIds = topics.map(t => t.id);
+  const topicIds = topics.map((t) => t.id);
 
   const { data: sections, error: sectionError } = await supabase
     .from("Section")
@@ -319,7 +337,7 @@ const getProgress = asyncHandler(async (req, res) => {
     return res.status(404).json({ error: "No sections found for topics." });
   }
 
-  const sectionIds = sections.map(s => s.id);
+  const sectionIds = sections.map((s) => s.id);
 
   // ── Section progress ─────────────────────────────────────────
   const { data: sectionProgress } = await supabase
@@ -334,26 +352,28 @@ const getProgress = asyncHandler(async (req, res) => {
   }
 
   // ── Current module ───────────────────────────────────────────
-  const current_module = lastSection ? {
-    topic_name: lastSection.Section?.Topic?.name ?? null,
-    topic_id: lastSection.Section?.Topic?.id ?? null,
-    section_name: lastSection.Section?.name ?? null,
-    section_id: lastSection.section_id,
-    mastery_score: parseFloat(lastSection.mastery_score || 0),
-    last_attempted_at: lastSection.last_attempted_at,
-  } : null;
+  const current_module = lastSection
+    ? {
+        topic_name: lastSection.Section?.Topic?.name ?? null,
+        topic_id: lastSection.Section?.Topic?.id ?? null,
+        section_name: lastSection.Section?.name ?? null,
+        section_id: lastSection.section_id,
+        mastery_score: parseFloat(lastSection.mastery_score || 0),
+        last_attempted_at: lastSection.last_attempted_at,
+      }
+    : null;
 
   // ── Build progressArray with topic mastery + section status ──
   let total_sections = 0;
   let total_mastery = 0;
   let isFirstSectionGlobal = true;
 
-  const progressArray = topics.map(topic => {
-    const topicSections = sections.filter(sec => sec.topic_ID === topic.id);
+  const progressArray = topics.map((topic) => {
+    const topicSections = sections.filter((sec) => sec.topic_ID === topic.id);
     const topicCount = topicSections.length;
     let topicMasterySum = 0;
 
-    const mappedSections = topicSections.map(sec => {
+    const mappedSections = topicSections.map((sec) => {
       const p = progressMap[sec.id];
       const mastery = p ? parseFloat(p.mastery_score) : 0;
       const isCompleted = p?.completed ?? false;
@@ -383,9 +403,8 @@ const getProgress = asyncHandler(async (req, res) => {
       };
     });
 
-    const topic_mastery = topicCount > 0
-      ? Math.round(topicMasterySum / topicCount)
-      : 0;
+    const topic_mastery =
+      topicCount > 0 ? Math.round(topicMasterySum / topicCount) : 0;
 
     return {
       topic_name: topic.name,
@@ -401,10 +420,12 @@ const getProgress = asyncHandler(async (req, res) => {
   if (!current_module && progressArray.length > 0) {
     hasActivityHistory = false;
     const firstTopic = progressArray[0];
-    finalProgressArray = [{
-      ...firstTopic,
-      sections: firstTopic.sections.slice(0, 4),
-    }];
+    finalProgressArray = [
+      {
+        ...firstTopic,
+        sections: firstTopic.sections.slice(0, 4),
+      },
+    ];
   }
 
   // ── Cache check & compute ────────────────────────────────────
@@ -417,18 +438,28 @@ const getProgress = asyncHandler(async (req, res) => {
   if (cacheAgeMinutes < 60 && cached_overall_grade != null) {
     current_grade = cached_overall_grade;
     completion_progress = cached_completion_pct;
-    time_logged_pct = cached_total_minutes > 0 && (timeCommitment || 0) > 0
-      ? Math.min(100, Math.round((cached_total_minutes / ((timeCommitment || 1) * 60)) * 100))
-      : 0;
-
+    time_logged_pct =
+      cached_total_minutes > 0 && (timeCommitment || 0) > 0
+        ? Math.min(
+            100,
+            Math.round(
+              (cached_total_minutes / ((timeCommitment || 1) * 60)) * 100
+            )
+          )
+        : 0;
   } else {
-    completion_progress = total_sections > 0
-      ? Math.round(total_mastery / total_sections)
-      : 0;
+    completion_progress =
+      total_sections > 0 ? Math.round(total_mastery / total_sections) : 0;
     current_grade = completion_progress;
-    time_logged_pct = (timeCommitment || 0) > 0
-      ? Math.min(100, Math.round((total_minutes_logged / ((timeCommitment || 1) * 60)) * 100))
-      : 0;
+    time_logged_pct =
+      (timeCommitment || 0) > 0
+        ? Math.min(
+            100,
+            Math.round(
+              (total_minutes_logged / ((timeCommitment || 1) * 60)) * 100
+            )
+          )
+        : 0;
 
     // Fire-and-forget cache update
     supabase
@@ -446,7 +477,6 @@ const getProgress = asyncHandler(async (req, res) => {
   }
 
   return res.status(200).json({
-
     name: studentName ?? "",
     github_activity,
     current_grade,
@@ -456,7 +486,7 @@ const getProgress = asyncHandler(async (req, res) => {
     progressArray: finalProgressArray,
     current_module,
     hasActivityHistory,
-    wrong_count: wrong_count ?? 0,  // ← feeds "12 Questions Wrong" card
+    wrong_count: wrong_count ?? 0, // ← feeds "12 Questions Wrong" card
     timeCommitment: time_goal_met,
     actual_time_commitment: timeCommitment,
     profile_picture,

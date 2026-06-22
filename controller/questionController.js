@@ -7,29 +7,38 @@ const supabase = require("../config/supabaseClient");
 //SEND an send email with with full name and description
 const getQuestions = asyncHandler(async (req, res) => {
   const { topic, section } = req.params;
+  const { class: classId } = req.query;
   const token = req.cookies?.access_token;
+
+  // console.log(topic, section, classId)
 
   if (!token) {
     return res.status(401).json({ error: "Missing or invalid token." });
   }
 
-  const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser(token);
   if (userError || !user) {
     return res.status(401).json({ error: "Unauthorized user." });
   }
 
-  // Get topic ID
+  // Get topic ID scoped to class
   const { data: topicData, error: topicError } = await supabase
     .from("Topic")
     .select("id")
-    .eq("name", topic)
+    .ilike("name", topic.trim())
+    .eq("class_ID", classId)
     .single();
+
+  // console.log(topicError)
 
   if (topicError || !topicData) {
     return res.status(404).json({ error: "Topic not found." });
   }
 
-  // Get section
+  // Get section ID scoped to topic
   const { data: sectionData, error: sectionError } = await supabase
     .from("Section")
     .select("id")
@@ -37,352 +46,758 @@ const getQuestions = asyncHandler(async (req, res) => {
     .eq("topic_ID", topicData.id)
     .single();
 
-
-
-    console.log(sectionData)
-
-
   if (sectionError || !sectionData) {
     return res.status(404).json({ error: "Section not found." });
   }
 
-  // Get question IDs from join table, ordered by position
-  const { data: sectionQuestions, error: sqError } = await supabase
-    .from("section_question")
-    .select("question_id")
-    .eq("section_id", sectionData.id)
-    .order("position", { ascending: true })
-    .limit(10);
-
-    console.log(sectionQuestions)
-
-  if (sqError || !sectionQuestions?.length) {
-    return res.status(404).json({ error: "No questions found for this section." });
-  }
-
-  const questionIds = sectionQuestions.map((sq) => sq.question_id);
-
-  // Get questions
-  const { data: questionData, error: questionError } = await supabase
+  // Fetch questions directly via section_id
+  const { data: questions, error: questionsError } = await supabase
     .from("question")
     .select("*")
-    .in("id", questionIds);
+    .eq("section_id", sectionData.id)
+    .limit(10);
 
-  if (questionError) {
+  if (questionsError) {
     return res.status(500).json({ error: "Error fetching questions." });
   }
 
-  // Get answers
-  const { data: answerData, error: answerError } = await supabase
+  if (!questions?.length) {
+    return res
+      .status(404)
+      .json({ error: "No questions found for this section." });
+  }
+
+  const questionIds = questions.map((q) => q.id);
+
+  // Fetch answers using real ID array
+  const { data: answers, error: answersError } = await supabase
     .from("answer")
     .select("*")
     .in("question_ID", questionIds);
 
-  if (answerError) {
+  if (answersError) {
     return res.status(500).json({ error: "Error fetching answers." });
   }
 
-  // Merge and preserve section order
-  const questionMap = new Map(questionData.map((q) => [q.id, q]));
-  const merged = questionIds
-    .map((id) => {
-      const q = questionMap.get(id);
-      if (!q) return null;
-      return { ...q, answers: answerData.filter((a) => a.question_ID === q.id) };
-    })
-    .filter(Boolean);
+  // Merge answers into their parent questions
+  const merged = questions.map((q) => ({
+    ...q,
+    answers: (answers || []).filter((a) => a.question_ID === q.id),
+  }));
 
   return res.status(200).json({ questions: merged });
 });
 
 // @ POST
 // ROUTE: /questions/save-marks
+//
+// Expected request body:
+// {
+//   topic_id:        number   — Topic.id
+//   section_id:      number   — Section.id
+//   grade:           number   — 0–100, percentage correct this attempt
+//   start_time:      string   — ISO timestamp (when the user started the question set)
+//   end_time:        string   — ISO timestamp (when they submitted)
+//   timezone:        string   — e.g. "America/Vancouver" (optional)
+//   recordedAnswers: Array<{
+//     question_id:        number
+//     answer_given:       string
+//     is_correct:         boolean
+//     time_spent_seconds: number
+//     used_ai_video:      boolean
+//     used_ai_chat:       boolean
+//   }>
+// }
+
 const saveQuestionMarks = asyncHandler(async (req, res) => {
-  // console.log("saveQuestionMarks is called");
-  let { topic, recordedAnswers, grade, section_name } = req.body;
+  const { topic_id, section_id, grade, start_time, end_time, recordedAnswers } =
+    req.body;
 
+  // ─── 1. Auth ────────────────────────────────────────────────────────────────
   const token = req.cookies?.access_token;
-  if (!token) {
+  if (!token)
     return res.status(401).json({ error: "Missing or invalid token." });
-  }
 
-  // Verify token
   const {
     data: { user },
     error: userError,
   } = await supabase.auth.getUser(token);
-  if (userError || !user) {
+  if (userError || !user)
     return res.status(401).json({ error: "Unauthorized user." });
-  }
 
-  const email = user.email;
-  // console.log(email);
-
-  // Find the student
-  const { data: studentData, error: studentError } = await supabase
+  // ─── 2. Fetch student ────────────────────────────────────────────────────────
+  const { data: student, error: studentError } = await supabase
     .from("Student")
-    .select("*")
-    .eq("email", email)
+    .select("id, Class_ID")
+    .eq("email", user.email)
     .single();
 
-  if (studentError || !studentData) {
+  if (studentError || !student) {
     return res.status(404).json({ error: "Student not found." });
   }
 
-  // Get their class progress
-  const { data: progressData, error: progressError } = await supabase
-    .from("Student Class Progress")
-    .select("*")
-    .eq("student_ID", studentData.id)
-    .single();
+  const studentId = student.id;
 
-  if (progressError || !progressData) {
-    return res.status(404).json({ error: "Progress not found." });
+  // ─── 3. Validate inputs ──────────────────────────────────────────────────────
+  if (
+    !topic_id ||
+    !section_id ||
+    grade == null ||
+    !start_time ||
+    !end_time ||
+    !Array.isArray(recordedAnswers)
+  ) {
+    return res.status(400).json({ error: "Missing required fields." });
   }
 
-  // Update topic_section_progress  //section_name
-  let updatedTopicSectionProgress = progressData.topic_section_progress || [];
+  const parsedGrade = Number(grade);
+  if (isNaN(parsedGrade) || parsedGrade < 0 || parsedGrade > 100) {
+    return res
+      .status(400)
+      .json({ error: "grade must be a number between 0 and 100." });
+  }
 
-  updatedTopicSectionProgress = updatedTopicSectionProgress.map((topicItem) => {
-    if (topicItem.topic_name === topic) {
-      return {
-        ...topicItem,
-        sections: topicItem.sections.map((section) => {
-          if (section.section_name === section_name) {
-            return {
-              ...section,
-              latest_grade: grade,
-              best_grade: Math.max(section.best_grade || 0, grade),
-              progress: 1,
-            };
-          }
-          return section;
-        }),
-      };
+  // ─── 4. Insert student_session ───────────────────────────────────────────────
+  const { error: sessionError } = await supabase
+    .from("student_session")
+    .insert({
+      student_ID: studentId,
+      start_time,
+      end_time,
+      timezone: req.body.timezone ?? null,
+    });
+
+  if (sessionError) {
+    console.error("session insert error:", sessionError);
+    return res.status(500).json({ error: "Failed to save session." });
+  }
+
+  // ─── 5. Insert/update student_question_attempt rows ──────────────────────────
+  const wrongAnswerIds = recordedAnswers
+    .filter((a) => !a.is_correct)
+    .map((a) => a.question_id);
+
+  let existingWrongAttempts = [];
+  if (wrongAnswerIds.length > 0) {
+    const { data: existing, error: fetchError } = await supabase
+      .from("student_question_attempt")
+      .select("id, question_id, section_id")
+      .eq("student_ID", studentId)
+      .eq("section_id", section_id)
+      .eq("is_correct", false)
+      .in("question_id", wrongAnswerIds);
+
+    if (fetchError) {
+      console.error("fetch existing attempts error:", fetchError);
+      return res
+        .status(500)
+        .json({ error: "Failed to check existing attempts." });
     }
-    return topicItem;
-  });
+    existingWrongAttempts = existing ?? [];
+  }
 
-  // Append to existing question_session array (or start a new one)
-  let updatedQuestionSession = Array.isArray(progressData.question_session)
-    ? [...progressData.question_session]
-    : [];
+  const existingWrongMap = Object.fromEntries(
+    existingWrongAttempts.map((row) => [row.question_id, row.id])
+  );
 
-  updatedQuestionSession.push({
-    recordedAnswers,
-    date: new Date().toISOString(),
-    topic,
-    grade,
-    section_name,
-  });
+  const toInsert = [];
+  const toUpdate = [];
 
-  // Save the update
-  const { error: updateError } = await supabase
-    .from("Student Class Progress")
+  for (const a of recordedAnswers) {
+    const payload = {
+      student_ID:         studentId,
+      question_id:        a.question_id,
+      section_id:         section_id,
+      is_correct:         Boolean(a.is_correct),
+      answer_given:       a.answer_given ?? null,
+      time_spent_seconds: a.time_spent_seconds ?? null,
+      used_ai_video:      Boolean(a.used_ai_video),
+      used_ai_chat:       Boolean(a.used_ai_chat),
+      // ✅ FIX: always reset these so a re-attempted wrong question
+      //         is treated as a fresh mistake, not a corrected one
+      corrected_at:       null,
+      reviewed:           false,
+    };
+
+    const existingId = !a.is_correct ? existingWrongMap[a.question_id] : null;
+
+    if (existingId) {
+      toUpdate.push({ id: existingId, payload });
+    } else {
+      toInsert.push(payload);
+    }
+  }
+
+  if (toInsert.length > 0) {
+    const { error: insertError } = await supabase
+      .from("student_question_attempt")
+      .insert(toInsert);
+
+    if (insertError) {
+      console.error("attempts insert error:", insertError);
+      return res
+        .status(500)
+        .json({ error: "Failed to save question attempts." });
+    }
+  }
+
+  for (const { id, payload } of toUpdate) {
+    const { error: updateError } = await supabase
+      .from("student_question_attempt")
+      .update(payload)
+      .eq("id", id);
+
+    if (updateError) {
+      console.error("attempts update error:", updateError);
+      return res
+        .status(500)
+        .json({ error: "Failed to update question attempt." });
+    }
+  }
+
+  // ─── 6. Upsert student_section_progress ──────────────────────────────────────
+  const sectionStatus = parsedGrade >= 80 ? "completed" : "in_progress";
+
+  const { data: existingProgress } = await supabase
+    .from("student_section_progress")
+    .select("id, mastery_score, completed")
+    .eq("student_ID", studentId)
+    .eq("section_id", section_id)
+    .maybeSingle();
+
+  const newMastery = parsedGrade / 100;
+  const bestMastery = existingProgress
+    ? Math.max(existingProgress.mastery_score ?? 0, newMastery)
+    : newMastery;
+
+  const bestStatus =
+    existingProgress?.completed === true ? "completed" : sectionStatus;
+
+  const progressPayload = {
+    student_ID:        studentId,
+    section_id:        section_id,
+    mastery_score:     bestMastery,
+    completed:         bestStatus === "completed",
+    status:            bestStatus,
+    last_attempted_at: new Date().toISOString(),
+  };
+
+  let sectionProgressError;
+  if (existingProgress) {
+    ({ error: sectionProgressError } = await supabase
+      .from("student_section_progress")
+      .update(progressPayload)
+      .eq("id", existingProgress.id));
+  } else {
+    ({ error: sectionProgressError } = await supabase
+      .from("student_section_progress")
+      .insert(progressPayload));
+  }
+
+  if (sectionProgressError) {
+    console.error("section progress error:", sectionProgressError);
+    return res
+      .status(500)
+      .json({ error: "Failed to update section progress." });
+  }
+
+  // ─── 7. Recompute & cache Student-level aggregates ───────────────────────────
+  const { data: classTopics, error: classTopicsError } = await supabase
+    .from("Topic")
+    .select("id")
+    .eq("class_ID", student.Class_ID);
+
+  if (classTopicsError) {
+    console.error("classTopics fetch error:", classTopicsError);
+    return res.status(200).json({
+      message: "Progress saved. Cache update skipped (could not resolve class topics).",
+    });
+  }
+
+  const classTopicIds = (classTopics || []).map((t) => t.id);
+
+  const [
+    { data: allSections, error: allSectionsError },
+    { data: allSessions, error: allSessionsError },
+    { count: totalSectionCount, error: totalSectionsError },
+  ] = await Promise.all([
+    supabase
+      .from("student_section_progress")
+      .select("completed, mastery_score")
+      .eq("student_ID", studentId),
+
+    supabase
+      .from("student_session")
+      .select("duration_minutes")
+      .eq("student_ID", studentId),
+
+    supabase
+      .from("Section")
+      .select("id", { count: "exact", head: true })
+      .in("topic_ID", classTopicIds),
+  ]);
+
+  if (allSectionsError || allSessionsError || totalSectionsError) {
+    console.error("cache recalc fetch error:", {
+      allSectionsError,
+      allSessionsError,
+      totalSectionsError,
+    });
+    return res.status(200).json({
+      message: "Progress saved. Cache update skipped due to fetch error.",
+    });
+  }
+
+  const overallGrade =
+    allSections.length > 0
+      ? Math.round(
+          (allSections.reduce(
+            (sum, s) => sum + (Number(s.mastery_score) || 0),
+            0
+          ) /
+            allSections.length) *
+            100
+        )
+      : 0;
+
+  const totalMinutes = allSessions.reduce(
+    (sum, s) => sum + (Number(s.duration_minutes) || 0),
+    0
+  );
+
+  const completedSections = allSections.filter((s) => s.completed).length;
+  const completionPct =
+    totalSectionCount > 0
+      ? Math.round((completedSections / totalSectionCount) * 100)
+      : 0;
+
+  const { error: cacheError } = await supabase
+    .from("Student")
     .update({
-      topic_section_progress: updatedTopicSectionProgress,
-      question_session: updatedQuestionSession,
+      cached_overall_grade:  overallGrade,
+      cached_total_minutes:  Math.round(totalMinutes),
+      cached_completion_pct: completionPct,
+      last_cache_updated_at: new Date().toISOString(),
     })
-    .eq("student_ID", studentData.id);
+    .eq("id", studentId);
 
-  // console.log(updateError);
-
-  if (updateError) {
-    return res.status(500).json({ error: "Failed to update progress." });
+  if (cacheError) {
+    console.error("cache update error:", cacheError);
   }
 
-  res.status(200).json({ message: "Progress updated successfully" });
-});
-
-// @ GET
-// /questions/get-questions
-const getRecordedAnswers = asyncHandler(async (req, res) => {
-  // console.log("Get recorded answers")
-  const token = req.cookies?.access_token;
-
-  if (!token) {
-    return res.status(401).json({ error: "Missing or invalid token." });
-  }
-
-  // Verify token
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser(token);
-
-  if (userError || !user) {
-    return res.status(401).json({ error: "Unauthorized user." });
-  }
-
-  // Get their class progress
-  const { data: progressData, error: progressError } = await supabase
-    .from("Student Class Progress")
-    .select("question_session")
-    .eq("student_ID", user.id) // use authenticated user's ID
-    .single();
-
-  if (progressError || !progressData) {
-    return res.status(404).json({ error: "Progress not found." });
-  }
-
-  // Filter only dates within current year
-  const currentYear = new Date().getFullYear();
-  const filteredArray = (progressData.question_session || []).filter((item) => {
-    if (!item.date) return false;
-    const sessionYear = new Date(item.date).getFullYear();
-    return sessionYear === currentYear;
+  return res.status(200).json({
+    message: "Progress saved successfully.",
+    summary: {
+      section_status: bestStatus,
+      grade:          parsedGrade,
+      overall_grade:  overallGrade,
+      total_minutes:  Math.round(totalMinutes),
+      completion_pct: completionPct,
+    },
   });
-
-  // console.log("sending marks seciton")
-  // console.log(filteredArray)
-  return res.status(200).json({ mark_section: filteredArray });
 });
 
-//@ POST
-// /questions/fix-questions
-const fixRecordedAnswers = asyncHandler(async (req, res) => {
-  // console.log("Get recorded answers")
 
-  const { questions_id } = req.body;
-
-  // console.log(questions_id);
-
+// GET /questions/mistakes
+const getMistakes = asyncHandler(async (req, res) => {
   const token = req.cookies?.access_token;
-
-  if (!token) {
+  if (!token)
     return res.status(401).json({ error: "Missing or invalid token." });
-  }
 
-  // Verify token
   const {
     data: { user },
     error: userError,
   } = await supabase.auth.getUser(token);
-
-  if (userError || !user) {
+  if (userError || !user)
     return res.status(401).json({ error: "Unauthorized user." });
-  }
 
-  // Get their class progress
-  const { data: progressData, error: progressError } = await supabase
-    .from("question")
-    .select("id ,question")
-    .in("id", questions_id)
-    .limit(100);
-
-  const questionIds = progressData.map((q) => q.id);
-
-  const { data: answerData, error: answerError } = await supabase
-    .from("answer")
-    .select("question_ID, answer")
-    .in("question_ID", questionIds)
-    .limit(100);
-  // console.log(progressData)
-
-  // Map answers to their question IDs
-  const answerMap = {};
-  answerData.forEach((item) => {
-    answerMap[item.question_ID] = item.answer;
-  });
-
-  // Now you can combine progressData with their answers
-  const progressWithAnswers = progressData.map((q) => ({
-    ...q,
-    answer: answerMap[q.id] || null,
-  }));
-
-  return res.status(200).json({ question: progressWithAnswers });
-});
-
-// @ POST
-// /questions/fixed-mistakes
-const fixMistakes = asyncHandler(async (req, res) => {
-  const { fixed_questions_id } = req.body;
-// 
-  console.log(fixed_questions_id)
-
-  if (!Array.isArray(fixed_questions_id) || fixed_questions_id.length === 0) {
-    return res.status(400).json({ error: "fixed_questions_id must be a non-empty array" });
-  }
-
-  const token = req.cookies?.access_token;
-  if (!token) {
-    return res.status(401).json({ error: "Missing or invalid token." });
-  }
-
-  // Verify user
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser(token);
-
-  if (userError || !user) {
-    return res.status(401).json({ error: "Unauthorized user." });
-  }
-
-  // Get student ID
-  const { data: studentData, error: studentError } = await supabase
+  // ─── 1. Fetch student ────────────────────────────────────────────────────────
+  const { data: student, error: studentError } = await supabase
     .from("Student")
     .select("id")
     .eq("email", user.email)
     .single();
 
-  if (studentError || !studentData) {
+  if (studentError || !student) {
     return res.status(404).json({ error: "Student not found." });
   }
 
+  // ─── 2. Fetch wrong attempts: unreviewed AND not yet corrected ───────────────
+  const { data: wrongAttempts, error: attemptsError } = await supabase
+    .from("student_question_attempt")
+    .select(`
+      id,
+      question_id,
+      section_id,
+      answer_given,
+      attempted_at,
+      corrected_at,
+      time_spent_seconds,
+      used_ai_video,
+      used_ai_chat,
+      reviewed,
+      question (
+        id,
+        question,
+        hint,
+        formula,
+        image_url,
+        difficulty,
+        topic_id,
+        answer ( id, answer )
+      ),
+      Section (
+        id,
+        name,
+        difficulty,
+        topic_ID,
+        Topic (
+          id,
+          name
+        )
+      )
+    `)
+    .eq("student_ID", student.id)
+    .eq("is_correct", false)
+    .eq("reviewed", false)
+    .is("corrected_at", null)  // ✅ excludes corrected mistakes
+    .order("attempted_at", { ascending: false });
 
-  // console.log(studentData)
-
-  // Get their progress
-  const { data: progressData, error: progressError } = await supabase
-    .from("Student Class Progress")
-    .select("id, question_session")
-    .eq("student_ID", studentData.id);
-
-    // console.log(progressError)
-
-  if (progressError || !progressData?.length) {
-    return res.status(404).json({ error: "Progress not found." });
+  if (attemptsError) {
+    console.error("wrongAttempts fetch error:", attemptsError);
+    return res.status(500).json({ error: "Failed to fetch mistakes." });
   }
 
-  let question_session = progressData[0].question_session;
+  // ─── 3. Deduplicate — keep only the most recent attempt per question_id ───────
+  const seenQuestions = new Set();
+  const dedupedAttempts = [];
+  for (const attempt of wrongAttempts) {
+    if (!seenQuestions.has(attempt.question_id)) {
+      seenQuestions.add(attempt.question_id);
+      dedupedAttempts.push(attempt);
+    }
+  }
 
-  // Update matching answers
-  question_session = question_session.map(session => ({
-    ...session,
-    recordedAnswers: session.recordedAnswers.map(ans => {
-      if (fixed_questions_id.includes(ans.questionId)) {
-        return {
-          ...ans,
-          isCorrect: true,
-          // optionally set a correct answer text if you have it
-          // answer: ans.answer || "FIXED_ANSWER"
+  // ─── 4. Group by topic, then by section ──────────────────────────────────────
+  const topicMap = {};
+
+  for (const attempt of dedupedAttempts) {
+    const topic   = attempt.Section?.Topic;
+    const section = attempt.Section;
+
+    const topicId     = topic?.id     ?? attempt.question?.topic_id ?? "unknown";
+    const topicName   = topic?.name   ?? "Unknown Topic";
+    const sectionId   = section?.id   ?? attempt.section_id         ?? "unknown";
+    const sectionName = section?.name ?? "Unknown Section";
+
+    if (!topicMap[topicId]) {
+      topicMap[topicId] = {
+        topic_id:       topicId,
+        topic_name:     topicName,
+        total_mistakes: 0,
+        sections:       {},
+      };
+    }
+
+    if (!topicMap[topicId].sections[sectionId]) {
+      topicMap[topicId].sections[sectionId] = {
+        section_id:   sectionId,
+        section_name: sectionName,
+        difficulty:   section?.difficulty ?? null,
+        mistakes:     [],
+      };
+    }
+
+    topicMap[topicId].sections[sectionId].mistakes.push({
+      attempt_id:         attempt.id,
+      question_id:        attempt.question_id,
+      question_text:      attempt.question?.question  ?? null,
+      hint:               attempt.question?.hint      ?? null,
+      formula:            attempt.question?.formula   ?? null,
+      image_url:          attempt.question?.image_url ?? null,
+      difficulty:         attempt.question?.difficulty ?? null,
+      correct_answers:    (attempt.question?.answer ?? []).map((a) => a.answer),
+      answer_given:       attempt.answer_given,
+      attempted_at:       attempt.attempted_at,
+      time_spent_seconds: attempt.time_spent_seconds,
+      used_ai_video:      attempt.used_ai_video,
+      used_ai_chat:       attempt.used_ai_chat,
+      reviewed:           attempt.reviewed,
+    });
+
+    topicMap[topicId].total_mistakes += 1;
+  }
+
+  // ─── 5. Flatten into sorted arrays ───────────────────────────────────────────
+  const topics = Object.values(topicMap)
+    .map((t) => ({
+      ...t,
+      sections: Object.values(t.sections).sort(
+        (a, b) => b.mistakes.length - a.mistakes.length
+      ),
+    }))
+    .sort((a, b) => b.total_mistakes - a.total_mistakes);
+
+  // ─── 6. Derive worst section for sidebar card ─────────────────────────────────
+  let worstSection = null;
+  let worstCount   = 0;
+  for (const topic of topics) {
+    for (const section of topic.sections) {
+      if (section.mistakes.length > worstCount) {
+        worstCount   = section.mistakes.length;
+        worstSection = {
+          topic_name:    topic.topic_name,
+          section_name:  section.section_name,
+          mistake_count: section.mistakes.length,
         };
       }
-      return ans;
-    })
-  }));
-
-  // Save updated data
-  const { data: updatedData, error: updateError } = await supabase
-    .from("Student Class Progress")
-    .update({ question_session })
-    .eq("student_ID", studentData.id);
-
-    // console.log(updateError)
-  if (updateError) {
-    return res.status(500).json({ error: "Failed to update progress." });
+    }
   }
 
-  return res.status(200).json({ message:"Success" });
+  return res.status(200).json({
+    total_mistakes: dedupedAttempts.length,
+    worst_section:  worstSection,
+    topics,
+  });
 });
+// POST /questions/fixed-mistakes
+const fixMistakes = asyncHandler(async (req, res) => {
+  const { fixed_questions_id } = req.body;
 
+  if (!Array.isArray(fixed_questions_id) || fixed_questions_id.length === 0) {
+    return res
+      .status(400)
+      .json({ error: "fixed_questions_id must be a non-empty array." });
+  }
+
+  // ─── 1. Auth ─────────────────────────────────────────────────────────────────
+  const token = req.cookies?.access_token;
+  if (!token)
+    return res.status(401).json({ error: "Missing or invalid token." });
+
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser(token);
+  if (userError || !user)
+    return res.status(401).json({ error: "Unauthorized user." });
+
+  // ─── 2. Fetch student ─────────────────────────────────────────────────────────
+  const { data: student, error: studentError } = await supabase
+    .from("Student")
+    .select("id, Class_ID, cached_total_minutes")
+    .eq("email", user.email)
+    .single();
+
+  if (studentError || !student) {
+    return res.status(404).json({ error: "Student not found." });
+  }
+
+  const studentId = student.id;
+
+  // ─── 3. Find which sections are affected BEFORE stamping ─────────────────────
+  const { data: targetedAttempts, error: fetchAttemptsError } = await supabase
+    .from("student_question_attempt")
+    .select("section_id")
+    .eq("student_ID", studentId)
+    .eq("is_correct", false)
+    .is("corrected_at", null) // ← only stamp uncorrected ones
+    .in("question_id", fixed_questions_id);
+
+  if (fetchAttemptsError) {
+    console.error("Error finding target sections:", fetchAttemptsError);
+    return res
+      .status(500)
+      .json({ error: "Failed to resolve question sections." });
+  }
+
+  const affectedSectionIds = [
+    ...new Set(targetedAttempts?.map((a) => a.section_id).filter(Boolean)),
+  ];
+
+  // ─── 4. Stamp corrected_at — preserve the row, just mark it as fixed ─────────
+  const correctedAt = new Date().toISOString();
+
+  const { error: stampError } = await supabase
+    .from("student_question_attempt")
+    .update({ corrected_at: correctedAt, reviewed: true })
+    .eq("student_ID", studentId)
+    .eq("is_correct", false)
+    .eq("reviewed", false)
+    .in("question_id", fixed_questions_id);
+
+  if (stampError) {
+    console.error("Failed to stamp corrected_at:", stampError);
+    return res.status(500).json({ error: "Failed to record correction." });
+  }
+
+  // ─── 5. Recalculate mastery for each affected section ────────────────────────
+  // Mastery = (total questions - remaining UNCORRECTED wrong attempts) / total questions
+  // Corrected mistakes count as credit (corrected_at IS NOT NULL)
+  for (const sectionId of affectedSectionIds) {
+    const { count: totalSectionQuestions, error: countQuestionsError } =
+      await supabase
+        .from("question")
+        .select("id", { count: "exact", head: true })
+        .eq("section_id", sectionId);
+
+    // Only count still-wrong, uncorrected attempts against the student
+    const { count: remainingWrongCount, error: countWrongError } =
+      await supabase
+        .from("student_question_attempt")
+        .select("id", { count: "exact", head: true })
+        .eq("student_ID", studentId)
+        .eq("section_id", sectionId)
+        .eq("is_correct", false)
+        .is("corrected_at", null); // ← uncorrected wrong only
+
+    if (countQuestionsError || countWrongError || !totalSectionQuestions) {
+      console.error("Section mastery recalc error:", {
+        countQuestionsError,
+        countWrongError,
+      });
+      continue;
+    }
+
+    const remainingWrong = remainingWrongCount ?? 0;
+    const effectiveCorrect = totalSectionQuestions - remainingWrong;
+
+    // Corrected mistakes give 85% credit — rewards effort without inflating score
+    const { count: correctedCount } = await supabase
+      .from("student_question_attempt")
+      .select("id", { count: "exact", head: true })
+      .eq("student_ID", studentId)
+      .eq("section_id", sectionId)
+      .eq("is_correct", false)
+      .not("corrected_at", "is", null); // ← corrected wrong attempts
+
+    const originalCorrect = effectiveCorrect - (correctedCount ?? 0);
+    const newMastery = Math.min(
+      (originalCorrect + (correctedCount ?? 0) * 0.85) / totalSectionQuestions,
+      1.0
+    );
+    const sectionStatus = newMastery >= 0.8 ? "completed" : "in_progress";
+
+    const { data: existingProgress } = await supabase
+      .from("student_section_progress")
+      .select("id, mastery_score")
+      .eq("student_ID", studentId)
+      .eq("section_id", sectionId)
+      .maybeSingle();
+
+    // Never let mastery regress
+    const bestMastery = existingProgress
+      ? Math.max(existingProgress.mastery_score ?? 0, newMastery)
+      : newMastery;
+
+    const bestStatus = bestMastery >= 0.8 ? "completed" : sectionStatus;
+
+    const progressPayload = {
+      student_ID: studentId,
+      section_id: sectionId,
+      mastery_score: bestMastery,
+      completed: bestStatus === "completed",
+      status: bestStatus,
+      last_attempted_at: new Date().toISOString(),
+    };
+
+    if (existingProgress) {
+      const { error: updateErr } = await supabase
+        .from("student_section_progress")
+        .update(progressPayload)
+        .eq("id", existingProgress.id);
+      if (updateErr) console.error("Section progress update error:", updateErr);
+    } else {
+      const { error: insertErr } = await supabase
+        .from("student_section_progress")
+        .insert(progressPayload);
+      if (insertErr) console.error("Section progress insert error:", insertErr);
+    }
+  }
+
+  // ─── 6. Recompute student-level cache ────────────────────────────────────────
+  const { data: classTopics, error: classTopicsError } = await supabase
+    .from("Topic")
+    .select("id")
+    .eq("class_ID", student.Class_ID);
+
+  if (classTopicsError) {
+    console.error("classTopics fetch error:", classTopicsError);
+    return res
+      .status(200)
+      .json({ message: "Mistakes fixed. Cache update skipped." });
+  }
+
+  const classTopicIds = (classTopics || []).map((t) => t.id);
+
+  const [
+    { data: allSections, error: allSectionsError },
+    { count: totalSectionCount, error: totalSectionsError },
+  ] = await Promise.all([
+    supabase
+      .from("student_section_progress")
+      .select("completed, mastery_score")
+      .eq("student_ID", studentId),
+
+    supabase
+      .from("Section")
+      .select("id", { count: "exact", head: true })
+      .in("topic_ID", classTopicIds),
+  ]);
+
+  if (allSectionsError || totalSectionsError) {
+    console.error("Cache recalc fetch error:", {
+      allSectionsError,
+      totalSectionsError,
+    });
+    return res
+      .status(200)
+      .json({ message: "Mistakes fixed. Cache update skipped." });
+  }
+
+  const overallGrade =
+    allSections.length > 0
+      ? Math.round(
+          (allSections.reduce(
+            (sum, s) => sum + (Number(s.mastery_score) || 0),
+            0
+          ) /
+            allSections.length) *
+            100
+        )
+      : 0;
+
+  const completedSections = allSections.filter((s) => s.completed).length;
+  const completionPct =
+    totalSectionCount > 0
+      ? Math.round((completedSections / totalSectionCount) * 100)
+      : 0;
+
+  const { error: cacheError } = await supabase
+    .from("Student")
+    .update({
+      cached_overall_grade: overallGrade,
+      cached_completion_pct: completionPct,
+      last_cache_updated_at: new Date().toISOString(),
+    })
+    .eq("id", studentId);
+
+  if (cacheError) {
+    console.error("Student cache update error:", cacheError);
+  }
+
+  return res.status(200).json({
+    message: "Mistake fixed successfully.",
+    summary: {
+      overall_grade: overallGrade,
+      completion_pct: completionPct,
+    },
+  });
+});
 
 module.exports = {
   getQuestions,
   saveQuestionMarks,
-  getRecordedAnswers,
-  fixRecordedAnswers,
+  getMistakes,
   fixMistakes,
 };

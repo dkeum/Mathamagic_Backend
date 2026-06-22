@@ -20,7 +20,6 @@ if (process.env.NODE_ENV !== "DEVELOPMENT") {
   router.options("/questions/:topic/:section", (req, res) => res.sendStatus(204));
   router.options("/questions/save-marks", (req, res) => res.sendStatus(204));
   router.options("/questions/get-questions", (req, res) => res.sendStatus(204));
-  router.options("/questions/fix-questions", (req, res) => res.sendStatus(204));
   router.options("/questions/fixed-mistakes", (req, res) => res.sendStatus(204));
 
 }
@@ -28,8 +27,7 @@ if (process.env.NODE_ENV !== "DEVELOPMENT") {
 // Actual route handler
 router.get("/questions/:topic/:section", questionController.getQuestions);
 router.post("/questions/save-marks", questionController.saveQuestionMarks);
-router.get("/questions/get-questions", questionController.getRecordedAnswers)
-router.post("/questions/fix-questions", questionController.fixRecordedAnswers)
+router.get("/questions/mistakes", questionController.getMistakes)
 router.post("/questions/fixed-mistakes", questionController.fixMistakes)
 
 module.exports = router;

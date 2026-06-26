@@ -59,7 +59,7 @@ app.use("/api/waitlist", require("./routes/waitListRoute")); // Linked to extern
 app.use("/", require("./routes/practiceTopicRoute"))
 app.use("/", require("./routes/trackDataRoute"))
 app.use("/", require("./routes/finalExamRoute"))
-
+app.use("/", require("./routes/lessonRoute"))
 
 
 

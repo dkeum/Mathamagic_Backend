@@ -60,6 +60,7 @@ app.use("/", require("./routes/practiceTopicRoute"))
 app.use("/", require("./routes/trackDataRoute"))
 app.use("/", require("./routes/finalExamRoute"))
 app.use("/", require("./routes/lessonRoute"))
+app.use("/", require("./routes/AIVideoGenerateRoute"))
 
 
 

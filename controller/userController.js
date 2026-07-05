@@ -124,6 +124,8 @@ const getProgress = asyncHandler(async (req, res) => {
   if (!token)
     return res.status(401).json({ error: "Missing or invalid token." });
 
+
+  // console.log("Token received:", token);
   const {
     data: { user },
     error: userError,

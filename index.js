@@ -11,7 +11,7 @@ const app = express();
 const allowedOrigins = [
   "http://localhost:5173",
   "https://mathamagic.vercel.app",
-  "https://mathmagick.com",
+  "https://mathmagick.com*",
 ];
 
 

@@ -1,4 +1,5 @@
 const asyncHandler = require("express-async-handler");
+const nodemailer = require("nodemailer");
 const STRIPE_API_SECRET_KEY = process.env.STRIPE_API_SECRET_KEY;
 const stripe = require("stripe")(STRIPE_API_SECRET_KEY);
 const supabase = require("../config/supabaseClient");
@@ -18,12 +19,27 @@ const PLAN_AI_CREDITS = {
     free:                0,
 };
 
+/* ===================================================================
+   EMAIL CONFIGURATION (NODEMAILER)
+   =================================================================== */
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.NOREPLY_GMAIL,
+    pass: process.env.NOREPLY_GMAIL_APP_PASSWORD,
+  },
+});
+
+/* ===================================================================
+   WEBHOOK HANDLER
+   =================================================================== */
 const stripewebhookhandler = asyncHandler(async (req, res) => {
     const sig           = req.headers["stripe-signature"];
     const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
     let event;
     try {
+        // IMPORTANT: Ensure req.body is the raw buffer, not parsed JSON!
         event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
     } catch (err) {
         console.error(`❌ Webhook Signature Verification Failed: ${err.message}`);
@@ -62,7 +78,7 @@ const stripewebhookhandler = asyncHandler(async (req, res) => {
             break;
         }
 
-        // ── Case B: Upgrades, downgrades, renewals, cancellations ─
+        // ── Case B: Upgrades, downgrades, cancellations ───────────
         case "customer.subscription.updated": {
             const subscriptionId   = dataObject.id;
             const stripeCustomerId = dataObject.customer;
@@ -97,9 +113,54 @@ const stripewebhookhandler = asyncHandler(async (req, res) => {
             break;
         }
 
-        // ── Case D: Payment failed ────────────────────────────────
+        // ── Case D: Payment Succeeded (Renewals) ──────────────────
+        case "invoice.payment_succeeded": {
+            const subscriptionId = dataObject.subscription;
+            if (!subscriptionId) break; // Ignore one-off invoices, focus on subscriptions
+
+            // Fetch the latest subscription state to extend the user's access period
+            const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+            const priceId      = subscription.items.data[0].price.id;
+
+            const userId = await findUserIdBySubscriptionId(subscriptionId);
+            if (userId) {
+                await upsertSubscription({
+                    userId,
+                    subscriptionId,
+                    stripeCustomerId: dataObject.customer,
+                    priceId,
+                    status:            subscription.status,
+                    cancelAtPeriodEnd: subscription.cancel_at_period_end,
+                    currentPeriodStart: subscription.current_period_start,
+                    currentPeriodEnd:   subscription.current_period_end,
+                    trialEnd:           subscription.trial_end,
+                });
+                console.log(`✅ Invoice paid & subscription renewed for user: ${userId}`);
+            }
+            break;
+        }
+
+        // ── Case E: Payment Failed (Send Email) ───────────────────
         case "invoice.payment_failed": {
             console.log(`⚠️ Payment failed for customer: ${dataObject.customer}`);
+            
+            // Stripe usually provides the customer_email on the invoice object
+            let customerEmail = dataObject.customer_email;
+            const hostedInvoiceUrl = dataObject.hosted_invoice_url; // URL where they can pay manually
+            
+            // If email isn't on the invoice, fetch the customer directly
+            if (!customerEmail) {
+                try {
+                    const customer = await stripe.customers.retrieve(dataObject.customer);
+                    customerEmail = customer.email;
+                } catch (error) {
+                    console.error("❌ Failed to retrieve customer email for failed payment:", error.message);
+                }
+            }
+
+            if (customerEmail && hostedInvoiceUrl) {
+                await sendPaymentFailedEmail(customerEmail, hostedInvoiceUrl);
+            }
             break;
         }
 
@@ -111,10 +172,36 @@ const stripewebhookhandler = asyncHandler(async (req, res) => {
 });
 
 /* ===================================================================
-   DATABASE ABSTRACTIONS
-   ===================================================================
-*/
+   EMAIL ABSTRACTION
+   =================================================================== */
+async function sendPaymentFailedEmail(email, invoiceUrl) {
+    try {
+        await transporter.sendMail({
+            from: `"Your App Name" <${process.env.SMTP_USER}>`, 
+            to: email,
+            subject: "Action Required: Your subscription payment failed",
+            html: `
+                <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+                    <h2>Payment Failed</h2>
+                    <p>Hi there,</p>
+                    <p>We attempted to process your recent subscription payment, but the charge was declined.</p>
+                    <p>To ensure your access isn't interrupted, please update your payment method and settle your invoice using the secure link below:</p>
+                    <a href="${invoiceUrl}" style="display: inline-block; padding: 10px 20px; color: #fff; background-color: #635bff; text-decoration: none; border-radius: 5px; margin-top: 10px;">
+                        Update Payment & Pay Invoice
+                    </a>
+                    <p style="margin-top: 20px; color: #555;">Thank you!</p>
+                </div>
+            `,
+        });
+        console.log(`📧 Payment failure email successfully sent to ${email}`);
+    } catch (error) {
+        console.error("❌ Error sending payment failed email:", error.message);
+    }
+}
 
+/* ===================================================================
+   DATABASE ABSTRACTIONS
+   =================================================================== */
 async function upsertSubscription({
     userId,
     subscriptionId,
@@ -132,11 +219,11 @@ async function upsertSubscription({
     // Resolve plan type from price ID
     let internalPlanType = "self_study"; // fallback
     if (priceId === PRICE_IDS.student_pro)         internalPlanType = "student_pro";
-    if (priceId === PRICE_IDS.academic_excellence)  internalPlanType = "academic_excellence";
+    if (priceId === PRICE_IDS.academic_excellence) internalPlanType = "academic_excellence";
 
     const resolvedPlan = hasActiveAccess ? internalPlanType : "free";
 
-    // Assign AI credits based on plan — only on active payment, not on cancellation
+    // Assign AI credits based on plan — only on active payment
     const aiCredits = hasActiveAccess ? (PLAN_AI_CREDITS[resolvedPlan] ?? 0) : 0;
 
     // Convert Unix timestamps to ISO strings for Supabase
@@ -156,24 +243,19 @@ async function upsertSubscription({
     const { error } = await supabase
         .from("Student")
         .update({
-            // Plan & subscription identity
             plan_type:              resolvedPlan,
             stripe_customer_id:     stripeCustomerId,
             stripe_subscription_id: subscriptionId,
             subscription_status:    status,
 
-            // Access flag
             isSubscribed: hasActiveAccess,
 
-            // Trial tracking — once true, never set back to false (prevents abuse)
             ...(isTrialing && { had_trial: true }),
             ...(trialEndDate && { trial_end: trialEndDate }),
 
-            // Billing period dates
             ...(subscriptionStart && { subscription_start: subscriptionStart }),
             ...(subscriptionEnd   && { subscription_end:   subscriptionEnd   }),
 
-            // AI credits — only update when there's active access
             ...(hasActiveAccess && { AI_Credit: aiCredits }),
         })
         .eq("id", userId);

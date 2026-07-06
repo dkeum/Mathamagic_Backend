@@ -6,7 +6,8 @@ const authController = require("../controller/authController");
 // Only apply CORS and OPTIONS routes if NOT in development mode
 if (process.env.NODE_ENV !== "DEVELOPMENT") {
   const setCorsHeaders = (req, res, next) => {
-    res.setHeader("Access-Control-Allow-Origin", "https://mathamagic.vercel.app");
+    // res.setHeader("Access-Control-Allow-Origin", "https://mathamagic.vercel.app");
+     res.setHeader("Access-Control-Allow-Origin", "https://mathmagick.com");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
     res.setHeader("Access-Control-Allow-Credentials", "true");

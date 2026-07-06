@@ -3,6 +3,7 @@ const supabase = require("../config/supabaseClient");
 const dateFunctions = require("./helperFunctions/date");
 const { v4: uuidv4 } = require("uuid"); // import uuid
 const axios = require("axios");
+const jwt = require("jsonwebtoken");
 
 // @ POST
 // ROUTE: /update-user
@@ -12,27 +13,22 @@ const updateUser = asyncHandler(async (req, res) => {
   const { answers } = req.body;
   const token = req.cookies?.access_token;
 
-  // console.log(token)
-
   if (!token) {
     return res.status(401).json({ error: "Missing or invalid token." });
   }
 
-  // Verify token
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser(token);
-
-  if (userError || !user) {
+  let decoded;
+  try {
+    decoded = jwt.verify(token, process.env.EMAIL_VERIFY_SECRET);
+  } catch (err) {
     return res.status(401).json({ error: "Unauthorized user." });
   }
+
+  const email = decoded.email;
 
   const [_, __, course, desiredGrade, timeCommitment] = answers;
 
   const grade = course.replace(/[^0-9]/g, "");
-  //   console.log(answers)
-  //   console.log(grade, user.id, timeCommitment)
 
   let time = 0;
 
@@ -44,7 +40,6 @@ const updateUser = asyncHandler(async (req, res) => {
     time = 6;
   }
 
-  // Update the user's profile in the `profiles` table
   const { error: updateError } = await supabase
     .from("Student")
     .update({
@@ -53,7 +48,7 @@ const updateUser = asyncHandler(async (req, res) => {
       desired_grade: desiredGrade,
       time_commitment: time,
     })
-    .eq("email", user.email);
+    .eq("email", email);
 
   if (updateError) {
     console.error("Failed to update profile:", updateError.message);

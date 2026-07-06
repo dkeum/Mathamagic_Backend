@@ -59,7 +59,8 @@ const createCheckoutSession = asyncHandler(async (req, res) => {
 
     const origin = process.env.VITE_ENVIRONMENT === "DEVELOPMENT"
         ? "http://localhost:5173"
-        : "https://mathamagic.vercel.app";
+        :"https://mathmagick.com";
+        // : "https://mathamagic.vercel.app";
 
     // 3. Define configuration parameters base object cleanly
     const sessionParams = {

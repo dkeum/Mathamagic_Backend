@@ -32,7 +32,7 @@ if (process.env.NODE_ENV !== "DEVELOPMENT") {
 }
 
 // Actual route handler
-router.post("/update-user", userController.updateUser);
+router.post("/update-userprofile", userController.updateUser);
 router.put("/user/setname", userController.setName);
 router.put("/:topic/:section", userController.updateGrades);
 router.get("/:user_email/getprofile", userController.getProgress);

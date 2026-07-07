@@ -306,7 +306,7 @@ const verifyEmail = asyncHandler(async (req, res) => {
     // Set the same cookie your login flow uses
     res.cookie("access_token", sessionData.session.access_token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: process.env.NODE_ENV === "PRODUCTION",
       sameSite: process.env.NODE_ENV === "DEVELOPMENT" ? "lax" : "none",
       maxAge: 60 * 60 * 24 * 1000,
     });

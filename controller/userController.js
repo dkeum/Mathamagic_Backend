@@ -10,19 +10,16 @@ const jwt = require("jsonwebtoken");
 
 //SEND an send email with with full name and description
 const updateUser = asyncHandler(async (req, res) => {
-  const { answers } = req.body;
-  const token = req.cookies?.access_token;
+  const { answers, access_token } = req.body;
 
-  console.log("this is the token: " ,token)
-
-  if (!token) {
+  if (!access_token) {
     return res.status(401).json({ error: "Missing or invalid token." });
   }
 
   const {
     data: { user },
     error: userError,
-  } = await supabase.auth.getUser(token);
+  } = await supabase.auth.getUser(access_token);
 
   if (userError || !user) {
     return res.status(401).json({ error: "Unauthorized user." });
@@ -31,18 +28,12 @@ const updateUser = asyncHandler(async (req, res) => {
   const email = user.email;
 
   const [_, __, course, desiredGrade, timeCommitment] = answers;
-
   const grade = course.replace(/[^0-9]/g, "");
 
   let time = 0;
-
-  if (timeCommitment === "0-3 hours") {
-    time = 3;
-  } else if (timeCommitment === "3-5 hours") {
-    time = 5;
-  } else {
-    time = 6;
-  }
+  if (timeCommitment === "0-3 hours") time = 3;
+  else if (timeCommitment === "3-5 hours") time = 5;
+  else time = 6;
 
   const { error: updateError } = await supabase
     .from("Student")

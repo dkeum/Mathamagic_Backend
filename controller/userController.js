@@ -13,6 +13,8 @@ const updateUser = asyncHandler(async (req, res) => {
   const { answers } = req.body;
   const token = req.cookies?.access_token;
 
+  console.log(token)
+
   if (!token) {
     return res.status(401).json({ error: "Missing or invalid token." });
   }

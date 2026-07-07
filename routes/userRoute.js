@@ -22,7 +22,7 @@ if (process.env.NODE_ENV !== "DEVELOPMENT") {
   router.use(setCorsHeaders);
 
   // OPTIONS handler for preflight requests
-  router.options("/update-user", (req, res) => res.sendStatus(204));
+  router.options("/update-userprofile", (req, res) => res.sendStatus(204));
   router.options("/user/setname", (req, res) => res.sendStatus(204));
   router.options("/:topic/:section", (req, res) => res.sendStatus(204));
   router.options("/:user/getprofile", (req, res) => res.sendStatus(204));

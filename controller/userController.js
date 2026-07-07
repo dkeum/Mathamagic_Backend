@@ -17,14 +17,16 @@ const updateUser = asyncHandler(async (req, res) => {
     return res.status(401).json({ error: "Missing or invalid token." });
   }
 
-  let decoded;
-  try {
-    decoded = jwt.verify(token, process.env.EMAIL_VERIFY_SECRET);
-  } catch (err) {
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser(token);
+
+  if (userError || !user) {
     return res.status(401).json({ error: "Unauthorized user." });
   }
 
-  const email = decoded.email;
+  const email = user.email;
 
   const [_, __, course, desiredGrade, timeCommitment] = answers;
 

@@ -47,10 +47,11 @@ const createCheckoutSession = asyncHandler(async (req, res) => {
 
     // 2. Resolve Price IDs
     const PRICE_IDS = {
-        self_study: process.env.STRIPE_PRICE_SELF_STUDY || "price_1Td1FoRv5XPjIybS2GNrcDDN",
-        student_pro: process.env.STRIPE_PRICE_STUDENT_PRO || "price_1Td43kRv5XPjIybSvLaoLLlg",
-        academic_excellent: process.env.STRIPE_PRICE_EXCELLENCE || "price_1Td44gRv5XPjIybS4Gv43ibj", // <-- Changed from excellence to excellent
-    };
+    self_study: (process.env.STRIPE_PRICE_SELF_STUDY || "price_1Td1FoRv5XPjIybS2GNrcDDN").trim(),
+    student_pro: (process.env.STRIPE_PRICE_STUDENT_PRO || "price_1Td43kRv5XPjIybSvLaoLLlg").trim(),
+    academic_excellent: (process.env.STRIPE_PRICE_EXCELLENCE || "price_1Td44gRv5XPjIybS4Gv43ibj").trim(), // <-- Changed from excellence to excellent
+};
+
 
     const selectedPriceId = PRICE_IDS[plan];
     if (!selectedPriceId) {

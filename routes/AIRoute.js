@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 
 
-const aiController = require("../controller/aiController");
+const aiController = require("../controller/AIController");
 
 // Only apply CORS headers and OPTIONS handlers in non-development environments
 if (process.env.NODE_ENV !== "DEVELOPMENT") {

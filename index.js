@@ -51,6 +51,10 @@ app.use(cookieParser());
 app.use(express.json());
 const PORT = 3000;
 
+app.get("/", (req, res) => {
+  res.json({ message: "hi" });
+});
+
 app.use("/", require("./routes/publicAPI/contactRoute"));
 app.use("/", require("./routes/authRoute")); // Good for Serverless function
 app.use("/", require("./routes/userRoute"))

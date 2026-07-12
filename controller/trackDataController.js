@@ -15,11 +15,14 @@ const getLetterGrade = (score) => {
 // @ GET
 // ROUTE: /student/progress
 const getTrackingData = asyncHandler(async (req, res) => {
-  const token = req.cookies?.access_token;
+  const authHeader = req.headers.authorization;
+  const token = authHeader ? authHeader.split(" ")[1] : req.cookies?.access_token;
   if (!token) {
     return res.status(401).json({ error: "Missing or invalid token." });
   }
 
+
+  // console.log(token)
   // ─── 1. Authenticate User ──────────────────────────────────────────────────
   const { data: { user }, error: userError } = await supabase.auth.getUser(token);
   if (userError || !user) {
@@ -41,10 +44,10 @@ const getTrackingData = asyncHandler(async (req, res) => {
 
   // ─── 3. Gather Performance Analytics Concurrently ──────────────────────────
   const [
-    { data: attempts,        error: attemptsError  },
-    { data: sessions,        error: sessionsError  },
-    { data: progressRecords, error: progressError  },
-    { data: topics,          error: topicsError    },
+    { data: attempts, error: attemptsError },
+    { data: sessions, error: sessionsError },
+    { data: progressRecords, error: progressError },
+    { data: topics, error: topicsError },
   ] = await Promise.all([
     // A. All question attempts — corrected_at for weighted grade calculation
     supabase
@@ -125,7 +128,7 @@ const getTrackingData = asyncHandler(async (req, res) => {
 
   // ─── 5. Study Session Time Logs ────────────────────────────────────────────
   const timeLogs = (sessions || []).map((s) => ({
-    date:          s.start_time,
+    date: s.start_time,
     durationHours: (Number(s.duration_minutes) || 0) / 60,
   }));
 
@@ -133,11 +136,11 @@ const getTrackingData = asyncHandler(async (req, res) => {
   const topicMetrics = {};
   (topics || []).forEach((t) => {
     topicMetrics[t.id] = {
-      id:         t.id,
-      name:       t.name,
+      id: t.id,
+      name: t.name,
       totalScore: 0,
-      count:      0,
-      timeSpent:  0,
+      count: 0,
+      timeSpent: 0,
     };
   });
 
@@ -149,8 +152,8 @@ const getTrackingData = asyncHandler(async (req, res) => {
 
     const mastery = Number(p.mastery_score) || 0;
     topicMetrics[topicId].totalScore += mastery;
-    topicMetrics[topicId].count      += 1;
-    topicMetrics[topicId].timeSpent  += mastery;
+    topicMetrics[topicId].count += 1;
+    topicMetrics[topicId].timeSpent += mastery;
     attemptedTopicIds.add(topicId);
   });
 
@@ -163,25 +166,25 @@ const getTrackingData = asyncHandler(async (req, res) => {
       const gradeLetter = getLetterGrade(numericGrade);
       const timeSpent = Number(t.timeSpent.toFixed(2));
 
-      let desc  = "Needs review";
-      let bg    = "bg-red-50";
-      let text  = "text-red-500";
+      let desc = "Needs review";
+      let bg = "bg-red-50";
+      let text = "text-red-500";
       let color = "#E53E3E";
 
       if (numericGrade >= 85) {
-        desc  = "Perfect Score Streak";
-        bg    = "bg-green-50";
-        text  = "text-green-600";
+        desc = "Perfect Score Streak";
+        bg = "bg-green-50";
+        text = "text-green-600";
         color = "#38A169";
       } else if (numericGrade >= 75) {
-        desc  = "Improving steadily";
-        bg    = "bg-purple-50";
-        text  = "text-purple-600";
+        desc = "Improving steadily";
+        bg = "bg-purple-50";
+        text = "text-purple-600";
         color = "#5d3fd3";
       } else if (numericGrade >= 65) {
-        desc  = "Needs consistent review";
-        bg    = "bg-amber-50";
-        text  = "text-amber-600";
+        desc = "Needs consistent review";
+        bg = "bg-amber-50";
+        text = "text-amber-600";
         color = "#fd8b00";
       }
 
@@ -201,19 +204,19 @@ const getTrackingData = asyncHandler(async (req, res) => {
   // ─── 7. Overall Effective Grade Across All Attempts ───────────────────────
   const overallEffectiveGrade = (attempts || []).length > 0
     ? Math.round(
-        (attempts.reduce((sum, att) => {
-          if (att.is_correct)   return sum + 1.0;
-          if (att.corrected_at) return sum + CORRECTED_WEIGHT;
-          return sum;
-        }, 0) / attempts.length) * 100
-      )
+      (attempts.reduce((sum, att) => {
+        if (att.is_correct) return sum + 1.0;
+        if (att.corrected_at) return sum + CORRECTED_WEIGHT;
+        return sum;
+      }, 0) / attempts.length) * 100
+    )
     : 0;
 
   // ─── 8. Persist Updated Grade Cache to Student Row ────────────────────────
   const { error: cacheError } = await supabase
     .from("Student")
     .update({
-      cached_overall_grade:  overallEffectiveGrade,
+      cached_overall_grade: overallEffectiveGrade,
       last_cache_updated_at: new Date().toISOString(),
     })
     .eq("id", studentId);
@@ -264,7 +267,7 @@ const getTrackingData = asyncHandler(async (req, res) => {
     for (const t of orderedTopics) {
       const orderedSections = [...(t.Section || [])].sort((a, b) => Number(a.id) - Number(b.id));
       const incomplete = orderedSections.find((s) => !completedSectionIds.has(s.id));
-      
+
       if (incomplete) {
         nextSection = incomplete;
         break;
@@ -288,12 +291,12 @@ const getTrackingData = asyncHandler(async (req, res) => {
 
   // ─── 10. Dispatch Unified Payload ──────────────────────────────────────────
   return res.status(200).json({
-    gradeTrend:           gradeTrendData.length ? gradeTrendData : null,
-    topics:               formattedTopics.length ? formattedTopics : null,
+    gradeTrend: gradeTrendData.length ? gradeTrendData : null,
+    topics: formattedTopics.length ? formattedTopics : null,
     timeLogs,
-    targetHours:          Number(student.time_commitment) || 15,
+    targetHours: Number(student.time_commitment) || 15,
     overallEffectiveGrade,
-    nextMilestone,       
+    nextMilestone,
   });
 });
 

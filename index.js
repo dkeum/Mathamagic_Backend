@@ -3,6 +3,7 @@ require("dotenv").config();
 const bodyParser = require("body-parser");
 const cookieParser = require("cookie-parser");
 const cors = require("cors");
+const supabase = require("./config/supabaseClient"); // ← add this
 
 const express = require("express");
 const app = express();
@@ -30,8 +31,8 @@ app.use(cors({
     }
   },
   credentials: true,
-  methods: ["GET", "POST", "PUT", "OPTIONS"],
-  allowedHeaders: ["Content-Type"],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
 }));
 
 
@@ -62,7 +63,39 @@ app.use("/", require("./routes/trackDataRoute"))
 app.use("/", require("./routes/finalExamRoute"))
 app.use("/", require("./routes/lessonRoute"))
 app.use("/", require("./routes/AIVideoGenerateRoute"))
+app.use("/", require("./routes/settingRoute"))
+app.use("/", require("./routes/AIRoute"))
 
+
+// CRONJOB
+app.get("/cron/refresh-fx-rate", async (req, res) => {
+  // Vercel auto-injects CRON_SECRET as an env var and sends it as the
+  // Authorization header on cron-triggered requests — verify it so
+  // this endpoint can't be triggered by anyone who finds the URL
+  // (your catch-all route makes every path publicly reachable).
+  const authHeader = req.headers.authorization;
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const response = await fetch("https://api.frankfurter.dev/v2/latest?base=USD&symbols=CAD");
+    const data = await response.json();
+    const rate = data.rates?.CAD;
+
+    if (!rate || typeof rate !== "number") throw new Error("Invalid rate response");
+
+    await supabase
+      .from("fx_rate_cache")
+      .update({ usd_to_cad: rate, updated_at: new Date().toISOString() })
+      .eq("id", 1);
+
+    return res.status(200).json({ updated: true, rate });
+  } catch (err) {
+    console.error("FX rate refresh failed, keeping last known rate:", err);
+    return res.status(200).json({ updated: false }); // don't error the cron — stale rate is fine for a day
+  }
+});
 
 
 app.listen(PORT, () => {

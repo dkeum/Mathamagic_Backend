@@ -15,7 +15,8 @@ const getPracticeBank = asyncHandler(async (req, res) => {
   }
 
   // 1. Authenticate user to know WHO is asking for their history
-  const token = req.cookies?.access_token;
+  const authHeader = req.headers.authorization;
+  const token = authHeader ? authHeader.split(" ")[1] : req.cookies?.access_token;
   if (!token)
     return res.status(401).json({ error: "Missing or invalid token." });
 

@@ -5,117 +5,18 @@ const { v4: uuidv4 } = require("uuid"); // import uuid
 const axios = require("axios");
 const jwt = require("jsonwebtoken");
 
-// @ POST
-// ROUTE: /update-user
 
-//SEND an send email with with full name and description
-const updateUser = asyncHandler(async (req, res) => {
-  const { answers, access_token } = req.body;
-
-  if (!access_token) {
-    return res.status(401).json({ error: "Missing or invalid token." });
-  }
-
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser(access_token);
-
-  if (userError || !user) {
-    return res.status(401).json({ error: "Unauthorized user." });
-  }
-
-  const email = user.email;
-
-  const [_, __, course, desiredGrade, timeCommitment] = answers;
-  const grade = course.replace(/[^0-9]/g, "");
-
-  let time = 0;
-  if (timeCommitment === "0-3 hours") time = 3;
-  else if (timeCommitment === "3-5 hours") time = 5;
-  else time = 6;
-
-  const { error: updateError } = await supabase
-    .from("Student")
-    .update({
-      grade,
-      class: course,
-      desired_grade: desiredGrade,
-      time_commitment: time,
-    })
-    .eq("email", email);
-
-  if (updateError) {
-    console.error("Failed to update profile:", updateError.message);
-    return res.status(500).json({ error: "Failed to update profile." });
-  }
-
-  return res.status(200).json({ message: "Profile updated successfully." });
-});
-
-// @ PUT
-// ROUTE: /user/setname
-
-const setName = asyncHandler(async (req, res) => {
-  const { name } = req.body;
-
-  console.log(name);
-
-  if (!name || name.trim() === "") {
-    return res.status(400).json({ error: "Name is required." });
-  }
-
-  // Extract token from cookie or Authorization header
-  const token = req.cookies?.access_token;
-
-  if (!token) {
-    return res.status(401).json({ error: "Missing or invalid token." });
-  }
-
-  //   console.log(token)
-
-  // Verify user token
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser(token);
-
-  if (userError || !user) {
-    return res.status(401).json({ error: "Unauthorized user." });
-  }
-
-  //   console.log(user.email, name)
-
-  // Update name in the profiles table
-  const { error: updateError } = await supabase
-    .from("Student")
-    .update({ name: name.trim() })
-    .eq("email", user.email);
-
-  if (updateError) {
-    console.error("Error updating name:", updateError.message);
-    return res.status(500).json({ error: "Failed to update name." });
-  }
-
-  const { data: data1, error1 } = await supabase
-    .from("Student")
-    .select("name")
-    .eq("email", user.email);
-
-  console.log(data1);
-
-  return res.status(200).json({ message: "Name updated successfully." });
-});
 
 // @ GET
 // ROUTE: /:user_email/getprofile
+// @ GET
+// ROUTE: /:user_email/getprofile
 const getProgress = asyncHandler(async (req, res) => {
-  const token = req.cookies?.access_token;
+  const authHeader = req.headers.authorization;
+  const token = authHeader ? authHeader.split(" ")[1] : req.cookies?.access_token;
   if (!token)
     return res.status(401).json({ error: "Missing or invalid token." });
 
-
-  // console.log("Token received:", token);
   const {
     data: { user },
     error: userError,
@@ -133,7 +34,8 @@ const getProgress = asyncHandler(async (req, res) => {
       AI_Credit, plan_type, isSubscribed, had_trial,
       trial_end, subscription_end, subscription_status, Class_ID,
       cached_overall_grade, cached_completion_pct,
-      cached_total_minutes, last_cache_updated_at
+      cached_total_minutes, last_cache_updated_at,
+      last_free_video_at, last_free_step_by_step_at
     `
     )
     .eq("email", email)
@@ -161,6 +63,8 @@ const getProgress = asyncHandler(async (req, res) => {
     cached_completion_pct,
     cached_total_minutes,
     last_cache_updated_at,
+    last_free_video_at,
+    last_free_step_by_step_at,
   } = studentData;
 
   let classId = classIdFromDb;
@@ -184,31 +88,45 @@ const getProgress = asyncHandler(async (req, res) => {
     );
   }
 
+  // ── Daily free-usage boundary (start of today, server local time) ──
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+
+  const video_free_available_today =
+    !last_free_video_at || new Date(last_free_video_at) < startOfToday;
+
+  const step_by_step_free_available_today =
+    !last_free_step_by_step_at ||
+    new Date(last_free_step_by_step_at) < startOfToday;
+
   // ── Run independent queries in parallel ──────────────────────
-  const [{ data: sessions }, { count: wrong_count }, { data: lastSection }] =
-    await Promise.all([
-      // Sessions for github activity + time tracking
-      supabase
-        .from("student_session")
-        .select("start_time, end_time, duration_minutes, timezone")
-        .eq("student_ID", studentId)
-        .order("start_time", { ascending: true }),
+  const [
+    { data: sessions },
+    { count: wrong_count },
+    { data: lastSection },
+    { count: homework_free_uploads_used_today },
+  ] = await Promise.all([
+    // Sessions for github activity + time tracking
+    supabase
+      .from("student_session")
+      .select("start_time, end_time, duration_minutes, timezone")
+      .eq("student_ID", studentId)
+      .order("start_time", { ascending: true }),
 
-      // Wrong unreviewed question count for dashboard card
-      // Fixed — only counts genuinely unresolved mistakes
-      supabase
-        .from("student_question_attempt")
-        .select("*", { count: "exact", head: true })
-        .eq("student_ID", studentId)
-        .eq("is_correct", false)
-        .eq("reviewed", false)
-        .is("corrected_at", null), // ← exclude corrected mistakes
+    // Wrong unreviewed question count for dashboard card
+    supabase
+      .from("student_question_attempt")
+      .select("*", { count: "exact", head: true })
+      .eq("student_ID", studentId)
+      .eq("is_correct", false)
+      .eq("reviewed", false)
+      .is("corrected_at", null),
 
-      // Last attempted section for current module
-      supabase
-        .from("student_section_progress")
-        .select(
-          `
+    // Last attempted section for current module
+    supabase
+      .from("student_section_progress")
+      .select(
+        `
         section_id,
         mastery_score,
         last_attempted_at,
@@ -221,13 +139,26 @@ const getProgress = asyncHandler(async (req, res) => {
           )
         )
       `
-        )
-        .eq("student_ID", studentId)
-        .not("last_attempted_at", "is", null)
-        .order("last_attempted_at", { ascending: false })
-        .limit(1)
-        .single(),
-    ]);
+      )
+      .eq("student_ID", studentId)
+      .not("last_attempted_at", "is", null)
+      .order("last_attempted_at", { ascending: false })
+      .limit(1)
+      .single(),
+
+    // Free homework uploads used today
+    supabase
+      .from("homework_submission")
+      .select("*", { count: "exact", head: true })
+      .eq("student_ID", studentId)
+      .eq("is_free_submission", true)
+      .gte("submitted_at", startOfToday.toISOString()),
+  ]);
+
+  const homework_free_uploads_remaining_today = Math.max(
+    0,
+    3 - (homework_free_uploads_used_today ?? 0)
+  );
 
   // ── Sessions ─────────────────────────────────────────────────
   let github_activity = [];
@@ -291,8 +222,6 @@ const getProgress = asyncHandler(async (req, res) => {
     );
   }
 
-  // console.log("this is the classId ", classId)
-
   // ── Class fallback ───────────────────────────────────────────
   if (!classId) {
     const { error: updateError } = await supabase
@@ -305,8 +234,6 @@ const getProgress = asyncHandler(async (req, res) => {
     }
     classId = 3;
   }
-
-  // console.log("this is the classId afterwards", classId)
 
   // ── Topics & Sections ────────────────────────────────────────
   const { data: topics, error: topicError } = await supabase
@@ -346,13 +273,13 @@ const getProgress = asyncHandler(async (req, res) => {
   // ── Current module ───────────────────────────────────────────
   const current_module = lastSection
     ? {
-        topic_name: lastSection.Section?.Topic?.name ?? null,
-        topic_id: lastSection.Section?.Topic?.id ?? null,
-        section_name: lastSection.Section?.name ?? null,
-        section_id: lastSection.section_id,
-        mastery_score: parseFloat(lastSection.mastery_score || 0),
-        last_attempted_at: lastSection.last_attempted_at,
-      }
+      topic_name: lastSection.Section?.Topic?.name ?? null,
+      topic_id: lastSection.Section?.Topic?.id ?? null,
+      section_name: lastSection.Section?.name ?? null,
+      section_id: lastSection.section_id,
+      mastery_score: parseFloat(lastSection.mastery_score || 0),
+      last_attempted_at: lastSection.last_attempted_at,
+    }
     : null;
 
   // ── Build progressArray with topic mastery + section status ──
@@ -395,8 +322,7 @@ const getProgress = asyncHandler(async (req, res) => {
       };
     });
 
-    const topic_mastery =
-      topicCount > 0 ? Math.round(topicMasterySum / topicCount) : 0;
+    const topic_mastery = topicCount > 0 ? (topicMasterySum / topicCount) : 0;
 
     return {
       topic_name: topic.name,
@@ -433,24 +359,24 @@ const getProgress = asyncHandler(async (req, res) => {
     time_logged_pct =
       cached_total_minutes > 0 && (timeCommitment || 0) > 0
         ? Math.min(
-            100,
-            Math.round(
-              (cached_total_minutes / ((timeCommitment || 1) * 60)) * 100
-            )
+          100,
+          Math.round(
+            (cached_total_minutes / ((timeCommitment || 1) * 60)) * 100
           )
+        )
         : 0;
   } else {
-    completion_progress =
-      total_sections > 0 ? Math.round(total_mastery / total_sections) : 0;
+    completion_progress = total_sections > 0 ? (total_mastery / total_sections) : 0;
+
     current_grade = completion_progress;
     time_logged_pct =
       (timeCommitment || 0) > 0
         ? Math.min(
-            100,
-            Math.round(
-              (total_minutes_logged / ((timeCommitment || 1) * 60)) * 100
-            )
+          100,
+          Math.round(
+            (total_minutes_logged / ((timeCommitment || 1) * 60)) * 100
           )
+        )
         : 0;
 
     // Fire-and-forget cache update
@@ -478,7 +404,7 @@ const getProgress = asyncHandler(async (req, res) => {
     progressArray: finalProgressArray,
     current_module,
     hasActivityHistory,
-    wrong_count: wrong_count ?? 0, // ← feeds "12 Questions Wrong" card
+    wrong_count: wrong_count ?? 0,
     timeCommitment: time_goal_met,
     actual_time_commitment: timeCommitment,
     profile_picture,
@@ -489,6 +415,16 @@ const getProgress = asyncHandler(async (req, res) => {
     subscription_status: subscription_status ?? "inactive",
     class: className,
     Class_ID: classIdFromDb,
+
+    // daily free-usage tracking (video / homework / step-by-step)
+    last_free_video_at: last_free_video_at ?? null,
+    video_free_available_today,
+
+    homework_free_uploads_used_today: homework_free_uploads_used_today ?? 0,
+    homework_free_uploads_remaining_today,
+
+    last_free_step_by_step_at: last_free_step_by_step_at ?? null,
+    step_by_step_free_available_today,
   });
 });
 
@@ -606,143 +542,11 @@ const saveSession = asyncHandler(async (req, res) => {
   res.status(200).json({ message: "Session saved successfully" });
 });
 
-// @ PUT
-// ROUTE: /update-profile-info
-const updateProfileInformation = asyncHandler(async (req, res) => {
-  const token = req.cookies?.access_token;
-  if (!token) {
-    return res.status(401).json({ error: "Missing or invalid token." });
-  }
-
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser(token);
-
-  if (userError || !user) {
-    return res.status(401).json({ error: "Unauthorized user." });
-  }
-
-  const email = user.email;
-  const { name } = req.body; // ✅ now works because Multer parses it
-  let picture_url = null;
-
-  if (req.file) {
-    const uniqueFilename = `${uuidv4()}.png`;
-    const base64Image = req.file.buffer.toString("base64");
-
-    const response = await axios.put(
-      `https://api.github.com/repos/${process.env.GITHUB_REPO}/contents/uploads/${uniqueFilename}`,
-      {
-        message: `Upload image ${uniqueFilename}`,
-        content: base64Image,
-        branch: process.env.GITHUB_BRANCH || "main",
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-          Accept: "application/vnd.github.v3+json",
-        },
-      }
-    );
-
-    picture_url = response.data.content.download_url;
-  }
-
-  if (!name && !picture_url) {
-    return res.status(400).json({ error: "No updates provided." });
-  }
-
-  const { data, error } = await supabase
-    .from("Student")
-    .update({
-      ...(name && { name }),
-      ...(picture_url && { profile_picture: picture_url }),
-    })
-    .eq("email", email)
-    .select();
-
-  if (error) {
-    console.error("Error updating student:", error);
-    return res.status(500).json({ error: "Failed to update student info." });
-  }
-
-  return res.status(200).json({
-    message: "Profile updated successfully",
-    student: data[0],
-  });
-});
-
-// @ DELETE
-// ROUTE: /delete-account
-const deleteAccount = asyncHandler(async (req, res) => {
-  const token = req.cookies?.access_token;
-  if (!token) {
-    return res.status(401).json({ error: "Missing or invalid token." });
-  }
-
-  // Get user from token
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser(token);
-
-  if (userError || !user) {
-    return res.status(401).json({ error: "Unauthorized user." });
-  }
-
-  const email = user.email;
-
-  // 1. Find the student by email
-  const { data: studentData, error: studentError } = await supabase
-    .from("Student")
-    .select("id")
-    .eq("email", email)
-    .single();
-
-  if (studentError || !studentData) {
-    return res.status(404).json({ error: "Student not found." });
-  }
-
-  const student_id = studentData.id;
-
-  // 2. Delete related Student Class Progress rows
-  const { error: progressError } = await supabase
-    .from("Student Class Progress")
-    .delete()
-    .eq("student_ID", student_id);
-
-  if (progressError) {
-    console.error("Error deleting progress:", progressError);
-    return res.status(500).json({ error: "Failed to delete progress data." });
-  }
-
-  // 3. Delete the Student row itself
-  const { error: deleteError } = await supabase
-    .from("Student")
-    .delete()
-    .eq("id", student_id);
-
-  if (deleteError) {
-    console.error("Error deleting student:", deleteError);
-    return res.status(500).json({ error: "Failed to delete student." });
-  }
-
-  // 4. Optionally: delete user from Supabase Auth too
-  // await supabase.auth.admin.deleteUser(user.id);
-
-  return res.status(200).json({
-    message: "Account deleted successfully.",
-    student_id,
-  });
-});
 
 module.exports = {
-  updateUser,
-  setName,
+
   getProgress,
   saveSession,
   updateGrades,
-  updateProfileInformation,
-  deleteAccount,
+
 };

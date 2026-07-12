@@ -3,28 +3,28 @@ const supabase = require("../config/supabaseClient");
 
 // GET /final-exam/topics
 const getTopics_FinalExam = asyncHandler(async (req, res) => {
+
+  const authHeader = req.headers.authorization;
+  const token = authHeader ? authHeader.split(" ")[1] : req.cookies?.access_token;
+
+  // console.log(token)
+  if (!token) return res.status(401).json({ error: "Missing token." });
+
   const { classId } = req.query;
   if (!classId) return res.status(400).json({ error: "classId is required" });
 
   // ─── 1. Auth ──────────────────────────────────────────────────────────────
-  const token = req.cookies?.access_token;
-  if (!token) return res.status(401).json({ error: "Missing token." });
 
-  let email;
-  try {
-    const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64").toString());
-    if (!payload.email || payload.exp < Math.floor(Date.now() / 1000))
-      return res.status(401).json({ error: "Token expired or invalid." });
-    email = payload.email;
-  } catch {
-    return res.status(401).json({ error: "Malformed token." });
+  const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+  if (userError || !user) {
+    return res.status(401).json({ error: "Unauthorized user." });
   }
 
   // ─── 2. Fetch student ─────────────────────────────────────────────────────
   const { data: student, error: studentError } = await supabase
     .from("Student")
     .select("id")
-    .eq("email", email)
+    .eq("email", user.email)
     .single();
 
   if (studentError || !student) return res.status(404).json({ error: "Student not found." });

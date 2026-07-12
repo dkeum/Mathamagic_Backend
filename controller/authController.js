@@ -323,9 +323,105 @@ const verifyEmail = asyncHandler(async (req, res) => {
   }
 });
 
+// ─── ADD to your existing authController.js ────────────────────────────────
+// (keeps signUp / login / logOut / verifyEmail exactly as they are — this is
+// a new export, not a replacement)
+
+// @ POST
+// ROUTE: /auth/google-session
+//
+// Called by the frontend right after Supabase's OAuth redirect completes.
+// Body: { access_token, refresh_token }
+const googleSession = asyncHandler(async (req, res) => {
+  const { access_token, refresh_token } = req.body;
+
+  if (!access_token) {
+    return res.status(400).json({ error: "Missing access_token." });
+  }
+
+  try {
+    // Validate the token Supabase just issued client-side
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser(access_token);
+
+    if (userError || !user) {
+      return res.status(401).json({ error: "Invalid Google session." });
+    }
+
+    const userEmail = user.email;
+    const userId = user.id;
+
+    // Same "find or create" pattern as login()
+    const { data: existingStudent, error: selectError } = await supabase
+      .from("Student")
+      .select("*")
+      .eq("email", userEmail)
+      .single();
+
+    let studentData = existingStudent;
+
+    if (!existingStudent) {
+      // Google already verified this email — skip your Nodemailer flow entirely
+      const { data: newStudent, error: insertError } = await supabase
+        .from("Student")
+        .insert([
+          {
+            id: userId,
+            email: userEmail,
+            is_verified: true,
+          },
+        ])
+        .select()
+        .single();
+
+      if (insertError) {
+        console.error("Error inserting student (Google):", insertError);
+        return res
+          .status(500)
+          .json({ error: "Failed to create student record." });
+      }
+
+      studentData = newStudent;
+    } else if (!existingStudent.is_verified) {
+      // Edge case: they'd previously started email/password signup but never
+      // clicked the verify link, and are now finishing via Google instead.
+      const { data: updated, error: updateError } = await supabase
+        .from("Student")
+        .update({ is_verified: true })
+        .eq("id", existingStudent.id)
+        .select()
+        .single();
+
+      if (!updateError) studentData = updated;
+    }
+
+    // Same cookie your login() and verifyEmail() set
+    res.cookie("access_token", access_token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "PRODUCTION",
+      sameSite: process.env.NODE_ENV === "DEVELOPMENT" ? "lax" : "none",
+      maxAge: 60 * 60 * 24 * 1000, // 1 day
+    });
+
+    return res.status(200).json({
+      message: "Google login successful",
+      user,
+      student: studentData,
+      access_token,
+      refresh_token,
+    });
+  } catch (err) {
+    console.error("Google session error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 module.exports = {
   signUp,
   login,
   logOut,
   verifyEmail,
+  googleSession, // ← add this
 };

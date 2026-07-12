@@ -7,7 +7,8 @@ const supabase = require("../config/supabaseClient");
 const getLessons = asyncHandler(async (req, res) => {
   const { topic, section } = req.params;
   const { class: classId } = req.query;
-  const token = req.cookies?.access_token;
+  const authHeader = req.headers.authorization;
+  const token = authHeader ? authHeader.split(" ")[1] : req.cookies?.access_token;
 
   if (!token) return res.status(401).json({ error: "Missing or invalid token." });
 
@@ -74,7 +75,8 @@ const getLessons = asyncHandler(async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 const getTopicsWithSections = asyncHandler(async (req, res) => {
   const { classID } = req.params;
-  const token = req.cookies?.access_token;
+  const authHeader = req.headers.authorization;
+  const token = authHeader ? authHeader.split(" ")[1] : req.cookies?.access_token;
 
   if (!token) return res.status(401).json({ error: "Missing or invalid token." });
 
@@ -124,16 +126,16 @@ const getTopicsWithSections = asyncHandler(async (req, res) => {
 
     (progress || []).forEach((p) => {
       progressMap[p.section_id] = {
-        completed:     p.completed,
+        completed: p.completed,
         video_watched: p.video_watched,
       };
     });
   }
 
   // 5. Calculate minutes studied this week (Monday through Sunday tracking)
-  const now       = new Date();
-  const dayOfWeek = now.getUTCDay();                       
-  const daysToMon = dayOfWeek === 0 ? 6 : dayOfWeek - 1;  
+  const now = new Date();
+  const dayOfWeek = now.getUTCDay();
+  const daysToMon = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
   const weekStart = new Date(now);
   weekStart.setUTCDate(now.getUTCDate() - daysToMon);
   weekStart.setUTCHours(0, 0, 0, 0);
@@ -164,26 +166,26 @@ const getTopicsWithSections = asyncHandler(async (req, res) => {
   (sections || []).forEach((s) => {
     if (!sectionsByTopic[s.topic_ID]) sectionsByTopic[s.topic_ID] = [];
     const prog = progressMap[s.id] ?? {};
-    
+
     sectionsByTopic[s.topic_ID].push({
-      id:                  s.id,
-      name:                s.name,
-      notes:               s.notes,
-      difficulty:          s.difficulty, // Transferred accurately
-      youtube_link:        s.youtube_link,
-      quiz_completed:      prog.completed    ?? false,
-      video_watched:       prog.video_watched ?? false,
-      minutes_this_week:   Math.round(sectionMinutesMap[s.id] || 0),
+      id: s.id,
+      name: s.name,
+      notes: s.notes,
+      difficulty: s.difficulty, // Transferred accurately
+      youtube_link: s.youtube_link,
+      quiz_completed: prog.completed ?? false,
+      video_watched: prog.video_watched ?? false,
+      minutes_this_week: Math.round(sectionMinutesMap[s.id] || 0),
     });
   });
 
   // 7. Structure overall enriched topics object tree
   const enrichedTopics = topics.map((t) => ({
-    id:          t.id,
-    name:        t.name,
+    id: t.id,
+    name: t.name,
     description: t.description,
-    order:       t.Order,
-    sections:    sectionsByTopic[t.id] ?? [],
+    order: t.Order,
+    sections: sectionsByTopic[t.id] ?? [],
   }));
 
   // 8. Find the next sequential video section the user needs to complete
@@ -196,7 +198,7 @@ const getTopicsWithSections = asyncHandler(async (req, res) => {
       resumeTarget = {
         ...nextSection,
         topic_name: topic.name,
-        topic_id:   topic.id,
+        topic_id: topic.id,
       };
       break; // Stop immediately at the earliest incomplete item sequence
     }
@@ -253,7 +255,7 @@ const markVideoWatched = asyncHandler(async (req, res) => {
     const { error: updateError } = await supabase
       .from("student_section_progress")
       .update({
-        video_watched:    true,
+        video_watched: true,
         video_watched_at: new Date().toISOString(),
       })
       .eq("id", existing.id);
@@ -267,13 +269,13 @@ const markVideoWatched = asyncHandler(async (req, res) => {
     const { error: insertError } = await supabase
       .from("student_section_progress")
       .insert({
-        student_ID:       student.id,
-        section_id:       section_id,
-        video_watched:    true,
+        student_ID: student.id,
+        section_id: section_id,
+        video_watched: true,
         video_watched_at: new Date().toISOString(),
-        mastery_score:    0,
-        completed:        false,
-        status:           "in_progress",
+        mastery_score: 0,
+        completed: false,
+        status: "in_progress",
         last_attempted_at: new Date().toISOString(),
       });
 
@@ -343,8 +345,8 @@ const setLessonWatched = asyncHandler(async (req, res) => {
       start_time,
       end_time,
       section_id: section_id ?? null,   // ← NEW: attribute session to section
-      topic_id:   topic_id   ?? null,   // ← NEW: attribute session to topic
-      timezone:   req.body.timezone ?? null,
+      topic_id: topic_id ?? null,   // ← NEW: attribute session to topic
+      timezone: req.body.timezone ?? null,
     });
 
   if (sessionError) {
@@ -383,16 +385,16 @@ const setLessonWatched = asyncHandler(async (req, res) => {
 
   for (const a of recordedAnswers) {
     const payload = {
-      student_ID:         studentId,
-      question_id:        a.question_id,
-      section_id:         section_id,
-      is_correct:         Boolean(a.is_correct),
-      answer_given:       a.answer_given ?? null,
+      student_ID: studentId,
+      question_id: a.question_id,
+      section_id: section_id,
+      is_correct: Boolean(a.is_correct),
+      answer_given: a.answer_given ?? null,
       time_spent_seconds: a.time_spent_seconds ?? null,
-      used_ai_video:      Boolean(a.used_ai_video),
-      used_ai_chat:       Boolean(a.used_ai_chat),
-      corrected_at:       null,
-      reviewed:           false,
+      used_ai_video: Boolean(a.used_ai_video),
+      used_ai_chat: Boolean(a.used_ai_chat),
+      corrected_at: null,
+      reviewed: false,
     };
 
     const existingId = !a.is_correct ? existingWrongMap[a.question_id] : null;
@@ -432,7 +434,7 @@ const setLessonWatched = asyncHandler(async (req, res) => {
     .eq("section_id", section_id)
     .maybeSingle();
 
-  const newMastery  = parsedGrade / 100;
+  const newMastery = parsedGrade / 100;
   const bestMastery = existingProgress
     ? Math.max(existingProgress.mastery_score ?? 0, newMastery)
     : newMastery;
@@ -441,11 +443,11 @@ const setLessonWatched = asyncHandler(async (req, res) => {
     existingProgress?.completed === true ? "completed" : sectionStatus;
 
   const progressPayload = {
-    student_ID:        studentId,
-    section_id:        section_id,
-    mastery_score:     bestMastery,
-    completed:         bestStatus === "completed",
-    status:            bestStatus,
+    student_ID: studentId,
+    section_id: section_id,
+    mastery_score: bestMastery,
+    completed: bestStatus === "completed",
+    status: bestStatus,
     last_attempted_at: new Date().toISOString(),
     // Preserve video_watched — don't reset it when submitting questions
     ...(existingProgress
@@ -485,7 +487,7 @@ const setLessonWatched = asyncHandler(async (req, res) => {
 
   const classTopicIds = (classTopics || []).map((t) => t.id);
 
-  const now       = new Date();
+  const now = new Date();
   const dayOfWeek = now.getUTCDay();
   const daysToMon = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
   const weekStart = new Date(now);
@@ -493,10 +495,10 @@ const setLessonWatched = asyncHandler(async (req, res) => {
   weekStart.setUTCHours(0, 0, 0, 0);
 
   const [
-    { data: allSections,    error: allSectionsError },
-    { data: allSessions,    error: allSessionsError },
+    { data: allSections, error: allSectionsError },
+    { data: allSessions, error: allSessionsError },
     { count: totalSectionCount, error: totalSectionsError },
-    { data: weekSessions,   error: weekSessionsError },
+    { data: weekSessions, error: weekSessionsError },
   ] = await Promise.all([
     supabase
       .from("student_section_progress")
@@ -530,9 +532,9 @@ const setLessonWatched = asyncHandler(async (req, res) => {
   const overallGrade =
     allSections.length > 0
       ? Math.round(
-          (allSections.reduce((sum, s) => sum + (Number(s.mastery_score) || 0), 0) /
-            allSections.length) * 100
-        )
+        (allSections.reduce((sum, s) => sum + (Number(s.mastery_score) || 0), 0) /
+          allSections.length) * 100
+      )
       : 0;
 
   const totalMinutes = allSessions.reduce(
@@ -552,8 +554,8 @@ const setLessonWatched = asyncHandler(async (req, res) => {
   const { error: cacheError } = await supabase
     .from("Student")
     .update({
-      cached_overall_grade:  overallGrade,
-      cached_total_minutes:  Math.round(totalMinutes),
+      cached_overall_grade: overallGrade,
+      cached_total_minutes: Math.round(totalMinutes),
       cached_completion_pct: completionPct,
       last_cache_updated_at: new Date().toISOString(),
     })
@@ -564,12 +566,12 @@ const setLessonWatched = asyncHandler(async (req, res) => {
   return res.status(200).json({
     message: "Progress saved successfully.",
     summary: {
-      section_status:    bestStatus,
-      grade:             parsedGrade,
-      overall_grade:     overallGrade,
-      total_minutes:     Math.round(totalMinutes),
+      section_status: bestStatus,
+      grade: parsedGrade,
+      overall_grade: overallGrade,
+      total_minutes: Math.round(totalMinutes),
       minutes_this_week: Math.round(minutesThisWeek),
-      completion_pct:    completionPct,
+      completion_pct: completionPct,
     },
   });
 });

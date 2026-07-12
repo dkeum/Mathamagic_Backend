@@ -1,25 +1,22 @@
 const asyncHandler = require("express-async-handler");
 const supabase = require("../config/supabaseClient");
 
-// @ GET
-// ROUTE: /questions/:topic/:section
+
 
 //SEND an send email with with full name and description
 const getQuestions = asyncHandler(async (req, res) => {
   const { topic, section } = req.params;
   const { class: classId } = req.query;
-  const token = req.cookies?.access_token;
+  const authHeader = req.headers.authorization;
+  const token = authHeader ? authHeader.split(" ")[1] : req.cookies?.access_token;
 
-  // console.log(topic, section, classId)
+  console.log(topic, section)
 
   if (!token) {
     return res.status(401).json({ error: "Missing or invalid token." });
   }
 
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser(token);
+  const { data: { user }, error: userError } = await supabase.auth.getUser(token);
   if (userError || !user) {
     return res.status(401).json({ error: "Unauthorized user." });
   }
@@ -31,8 +28,6 @@ const getQuestions = asyncHandler(async (req, res) => {
     .ilike("name", topic.trim())
     .eq("class_ID", classId)
     .single();
-
-  // console.log(topicError)
 
   if (topicError || !topicData) {
     return res.status(404).json({ error: "Topic not found." });
@@ -50,22 +45,25 @@ const getQuestions = asyncHandler(async (req, res) => {
     return res.status(404).json({ error: "Section not found." });
   }
 
-  // Fetch questions directly via section_id
-  const { data: questions, error: questionsError } = await supabase
+  // Fetch ALL questions for the section (removed .limit(10))
+  const { data: allQuestions, error: questionsError } = await supabase
     .from("question")
     .select("*")
-    .eq("section_id", sectionData.id)
-    .limit(10);
+    .eq("section_id", sectionData.id);
 
   if (questionsError) {
     return res.status(500).json({ error: "Error fetching questions." });
   }
 
-  if (!questions?.length) {
-    return res
-      .status(404)
-      .json({ error: "No questions found for this section." });
+  if (!allQuestions?.length) {
+    return res.status(404).json({ error: "No questions found for this section." });
   }
+
+  // --- RANDOMIZATION LOGIC ---
+  // Shuffle the array using a quick sort method and slice 10 items
+  const questions = allQuestions
+    .sort(() => 0.5 - Math.random())
+    .slice(0, 10);
 
   const questionIds = questions.map((q) => q.id);
 
@@ -205,18 +203,18 @@ const saveQuestionMarks = asyncHandler(async (req, res) => {
 
   for (const a of recordedAnswers) {
     const payload = {
-      student_ID:         studentId,
-      question_id:        a.question_id,
-      section_id:         section_id,
-      is_correct:         Boolean(a.is_correct),
-      answer_given:       a.answer_given ?? null,
+      student_ID: studentId,
+      question_id: a.question_id,
+      section_id: section_id,
+      is_correct: Boolean(a.is_correct),
+      answer_given: a.answer_given ?? null,
       time_spent_seconds: a.time_spent_seconds ?? null,
-      used_ai_video:      Boolean(a.used_ai_video),
-      used_ai_chat:       Boolean(a.used_ai_chat),
+      used_ai_video: Boolean(a.used_ai_video),
+      used_ai_chat: Boolean(a.used_ai_chat),
       // ✅ FIX: always reset these so a re-attempted wrong question
       //         is treated as a fresh mistake, not a corrected one
-      corrected_at:       null,
-      reviewed:           false,
+      corrected_at: null,
+      reviewed: false,
     };
 
     const existingId = !a.is_correct ? existingWrongMap[a.question_id] : null;
@@ -274,11 +272,11 @@ const saveQuestionMarks = asyncHandler(async (req, res) => {
     existingProgress?.completed === true ? "completed" : sectionStatus;
 
   const progressPayload = {
-    student_ID:        studentId,
-    section_id:        section_id,
-    mastery_score:     bestMastery,
-    completed:         bestStatus === "completed",
-    status:            bestStatus,
+    student_ID: studentId,
+    section_id: section_id,
+    mastery_score: bestMastery,
+    completed: bestStatus === "completed",
+    status: bestStatus,
     last_attempted_at: new Date().toISOString(),
   };
 
@@ -351,13 +349,13 @@ const saveQuestionMarks = asyncHandler(async (req, res) => {
   const overallGrade =
     allSections.length > 0
       ? Math.round(
-          (allSections.reduce(
-            (sum, s) => sum + (Number(s.mastery_score) || 0),
-            0
-          ) /
-            allSections.length) *
-            100
-        )
+        (allSections.reduce(
+          (sum, s) => sum + (Number(s.mastery_score) || 0),
+          0
+        ) /
+          allSections.length) *
+        100
+      )
       : 0;
 
   const totalMinutes = allSessions.reduce(
@@ -374,8 +372,8 @@ const saveQuestionMarks = asyncHandler(async (req, res) => {
   const { error: cacheError } = await supabase
     .from("Student")
     .update({
-      cached_overall_grade:  overallGrade,
-      cached_total_minutes:  Math.round(totalMinutes),
+      cached_overall_grade: overallGrade,
+      cached_total_minutes: Math.round(totalMinutes),
       cached_completion_pct: completionPct,
       last_cache_updated_at: new Date().toISOString(),
     })
@@ -389,9 +387,9 @@ const saveQuestionMarks = asyncHandler(async (req, res) => {
     message: "Progress saved successfully.",
     summary: {
       section_status: bestStatus,
-      grade:          parsedGrade,
-      overall_grade:  overallGrade,
-      total_minutes:  Math.round(totalMinutes),
+      grade: parsedGrade,
+      overall_grade: overallGrade,
+      total_minutes: Math.round(totalMinutes),
       completion_pct: completionPct,
     },
   });
@@ -400,7 +398,8 @@ const saveQuestionMarks = asyncHandler(async (req, res) => {
 
 // GET /questions/mistakes
 const getMistakes = asyncHandler(async (req, res) => {
-  const token = req.cookies?.access_token;
+  const authHeader = req.headers.authorization;
+  const token = authHeader ? authHeader.split(" ")[1] : req.cookies?.access_token;
   if (!token)
     return res.status(401).json({ error: "Missing or invalid token." });
 
@@ -482,47 +481,47 @@ const getMistakes = asyncHandler(async (req, res) => {
   const topicMap = {};
 
   for (const attempt of dedupedAttempts) {
-    const topic   = attempt.Section?.Topic;
+    const topic = attempt.Section?.Topic;
     const section = attempt.Section;
 
-    const topicId     = topic?.id     ?? attempt.question?.topic_id ?? "unknown";
-    const topicName   = topic?.name   ?? "Unknown Topic";
-    const sectionId   = section?.id   ?? attempt.section_id         ?? "unknown";
+    const topicId = topic?.id ?? attempt.question?.topic_id ?? "unknown";
+    const topicName = topic?.name ?? "Unknown Topic";
+    const sectionId = section?.id ?? attempt.section_id ?? "unknown";
     const sectionName = section?.name ?? "Unknown Section";
 
     if (!topicMap[topicId]) {
       topicMap[topicId] = {
-        topic_id:       topicId,
-        topic_name:     topicName,
+        topic_id: topicId,
+        topic_name: topicName,
         total_mistakes: 0,
-        sections:       {},
+        sections: {},
       };
     }
 
     if (!topicMap[topicId].sections[sectionId]) {
       topicMap[topicId].sections[sectionId] = {
-        section_id:   sectionId,
+        section_id: sectionId,
         section_name: sectionName,
-        difficulty:   section?.difficulty ?? null,
-        mistakes:     [],
+        difficulty: section?.difficulty ?? null,
+        mistakes: [],
       };
     }
 
     topicMap[topicId].sections[sectionId].mistakes.push({
-      attempt_id:         attempt.id,
-      question_id:        attempt.question_id,
-      question_text:      attempt.question?.question  ?? null,
-      hint:               attempt.question?.hint      ?? null,
-      formula:            attempt.question?.formula   ?? null,
-      image_url:          attempt.question?.image_url ?? null,
-      difficulty:         attempt.question?.difficulty ?? null,
-      correct_answers:    (attempt.question?.answer ?? []).map((a) => a.answer),
-      answer_given:       attempt.answer_given,
-      attempted_at:       attempt.attempted_at,
+      attempt_id: attempt.id,
+      question_id: attempt.question_id,
+      question_text: attempt.question?.question ?? null,
+      hint: attempt.question?.hint ?? null,
+      formula: attempt.question?.formula ?? null,
+      image_url: attempt.question?.image_url ?? null,
+      difficulty: attempt.question?.difficulty ?? null,
+      correct_answers: (attempt.question?.answer ?? []).map((a) => a.answer),
+      answer_given: attempt.answer_given,
+      attempted_at: attempt.attempted_at,
       time_spent_seconds: attempt.time_spent_seconds,
-      used_ai_video:      attempt.used_ai_video,
-      used_ai_chat:       attempt.used_ai_chat,
-      reviewed:           attempt.reviewed,
+      used_ai_video: attempt.used_ai_video,
+      used_ai_chat: attempt.used_ai_chat,
+      reviewed: attempt.reviewed,
     });
 
     topicMap[topicId].total_mistakes += 1;
@@ -540,14 +539,14 @@ const getMistakes = asyncHandler(async (req, res) => {
 
   // ─── 6. Derive worst section for sidebar card ─────────────────────────────────
   let worstSection = null;
-  let worstCount   = 0;
+  let worstCount = 0;
   for (const topic of topics) {
     for (const section of topic.sections) {
       if (section.mistakes.length > worstCount) {
-        worstCount   = section.mistakes.length;
+        worstCount = section.mistakes.length;
         worstSection = {
-          topic_name:    topic.topic_name,
-          section_name:  section.section_name,
+          topic_name: topic.topic_name,
+          section_name: section.section_name,
           mistake_count: section.mistakes.length,
         };
       }
@@ -556,7 +555,7 @@ const getMistakes = asyncHandler(async (req, res) => {
 
   return res.status(200).json({
     total_mistakes: dedupedAttempts.length,
-    worst_section:  worstSection,
+    worst_section: worstSection,
     topics,
   });
 });
@@ -758,13 +757,13 @@ const fixMistakes = asyncHandler(async (req, res) => {
   const overallGrade =
     allSections.length > 0
       ? Math.round(
-          (allSections.reduce(
-            (sum, s) => sum + (Number(s.mastery_score) || 0),
-            0
-          ) /
-            allSections.length) *
-            100
-        )
+        (allSections.reduce(
+          (sum, s) => sum + (Number(s.mastery_score) || 0),
+          0
+        ) /
+          allSections.length) *
+        100
+      )
       : 0;
 
   const completedSections = allSections.filter((s) => s.completed).length;
@@ -794,6 +793,9 @@ const fixMistakes = asyncHandler(async (req, res) => {
     },
   });
 });
+
+
+
 
 module.exports = {
   getQuestions,

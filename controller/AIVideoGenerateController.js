@@ -1,26 +1,27 @@
 const axios = require("axios");
 const asyncHandler = require("express-async-handler");
 const supabase = require("../config/supabaseClient");
+const { calculateCreditsUsed } = require("../config/aiCredits");
 
 const FREE_VIDEO_LIMIT_PER_DAY = 1;
-const VIDEO_CREDIT_COST = 10;
+const VIDEO_CREDIT_COST_FALLBACK = 10; 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /ai-video/stream-explanation
-// Intercepts query data context, forwards to Docker, and pipes response chunks
+// GET /ai-video/stream-explanation 
+// Intercepts query data context, forwards to Docker, awaits JSON response,
 // Checks free-daily-use, falls back to AI_Credit, only charges on success
 // ─────────────────────────────────────────────────────────────────────────────
 const streamAIExplanationVideo = asyncHandler(async (req, res) => {
-    // console.log("was called");
     const { questionId, topicId, sectionId, questionText, topicName, sectionName } = req.query;
 
     if (!questionId) {
         return res.status(400).json({ error: "Missing required question parameter values." });
     }
 
-    // console.log("auth is done")
     // ── Auth ────────────────────────────────────────────────────
-    const token = req.cookies?.access_token;
+    const authHeader = req.headers.authorization;
+    const token = authHeader ? authHeader.split(" ")[1] : req.cookies?.access_token;
+
     if (!token) {
         return res.status(401).json({ error: "Missing or invalid token." });
     }
@@ -29,10 +30,11 @@ const streamAIExplanationVideo = asyncHandler(async (req, res) => {
         data: { user },
         error: userError,
     } = await supabase.auth.getUser(token);
+    
     if (userError || !user) {
         return res.status(401).json({ error: "Unauthorized user." });
     }
-    // console.log("user is ", user.email)
+
     // ── Load student credit/plan/free-use state ───────────────────
     const { data: studentData, error: studentError } = await supabase
         .from("Student")
@@ -44,43 +46,30 @@ const streamAIExplanationVideo = asyncHandler(async (req, res) => {
         return res.status(404).json({ error: "Student not found." });
     }
 
-    console.log(studentError)
-
     const { id: studentId, AI_Credit, plan_type, last_free_video_at } = studentData;
 
     // ── Determine free eligibility (resets daily) ─────────────────
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
-    console.log(studentId, AI_Credit, plan_type, last_free_video_at)
-
-    const isFreeAvailable =
-        !last_free_video_at || new Date(last_free_video_at) < startOfToday;
-
+    const isFreeAvailable = !last_free_video_at || new Date(last_free_video_at) < startOfToday;
     let is_free_generation = false;
 
     if (isFreeAvailable) {
         is_free_generation = true;
-    } else if ((AI_Credit ?? 0) < VIDEO_CREDIT_COST) {
+    } else if ((AI_Credit ?? 0) <= 0) { 
         return res.status(403).json({
             message: "Not Enough Credits",
             error: "Insufficient credits.",
             ai_credits: AI_Credit ?? 0,
-            required: VIDEO_CREDIT_COST,
+            required: 1,
         });
     }
-    console.log("reached in")
 
     // ── Tier → model selection ─────────────────────────────────────
     const isPro = plan_type === "pro";
     const ai_tier = isPro ? "pro" : "free";
-    const model_used = isPro
-        ? "google/gemini-advanced"
-        : "openrouter/basic";
-
-    const remainingCreditsAfterSuccess = is_free_generation
-        ? (AI_Credit ?? 0)
-        : Math.max(0, (AI_Credit ?? 0) - VIDEO_CREDIT_COST);
+    const model_used = isPro ? "gemini-2.5-pro" : "gemini-2.5-flash";
 
     // ── Log a pending video_generation row ──────────────────────────
     const { data: videoGenRow, error: videoGenError } = await supabase
@@ -91,7 +80,7 @@ const streamAIExplanationVideo = asyncHandler(async (req, res) => {
             status: "pending",
             is_free_generation,
             ai_tier,
-            model_used,
+            model_used, 
             credits_charged: 0,
         })
         .select()
@@ -104,9 +93,9 @@ const streamAIExplanationVideo = asyncHandler(async (req, res) => {
 
     const videoGenId = videoGenRow.id;
 
-    // ── Helper to finalize the row + charge credits/free-use ────────
-    const finalizeSuccess = async () => {
-        const creditsCharged = is_free_generation ? 0 : VIDEO_CREDIT_COST;
+    // ── Helpers to finalize the row ───────────────────────────────
+    const finalizeSuccess = async (calculatedCredits) => {
+        const creditsCharged = is_free_generation ? 0 : calculatedCredits;
 
         await supabase
             .from("video_generation")
@@ -122,12 +111,17 @@ const streamAIExplanationVideo = asyncHandler(async (req, res) => {
                 .from("Student")
                 .update({ last_free_video_at: new Date().toISOString() })
                 .eq("id", studentId);
-        } else {
-            await supabase
-                .from("Student")
-                .update({ AI_Credit: remainingCreditsAfterSuccess })
-                .eq("id", studentId);
+        } else if (creditsCharged > 0) {
+            const { data: remaining, error: rpcError } = await supabase.rpc("deduct_ai_credit", {
+                p_student_id: studentId,
+                p_amount: creditsCharged,
+            });
+            if (rpcError) {
+                console.error("Credit deduction failed via RPC during video generation:", rpcError);
+            }
+            return remaining;
         }
+        return null;
     };
 
     const finalizeFailure = async (errorMessage) => {
@@ -139,12 +133,10 @@ const streamAIExplanationVideo = asyncHandler(async (req, res) => {
                 completed_at: new Date().toISOString(),
             })
             .eq("id", videoGenId);
-        // No Student row touched — free-use and credits stay untouched
     };
 
+    // ── Call Flask Pipeline ────────────────────────────────────────
     try {
-        console.log("trying flask response with ", questionId, topicId, sectionId, questionText);
-
         const dockerResponse = await axios({
             method: "post",
             url: "http://localhost:5000/generate-video",
@@ -165,69 +157,68 @@ const streamAIExplanationVideo = asyncHandler(async (req, res) => {
                     catch { return sectionName || ""; }
                 })(),
                 ai_tier,
+                gemini_model: model_used,
             },
-            responseType: "stream",
-            timeout: 180000,
+            headers: {
+                "X-Internal-Service-Key": process.env.INTERNAL_SERVICE_KEY,
+            },
+            responseType: "json", // Await JSON directly
+            timeout: 360000,
         });
 
-        // ── Forward Flask's REAL headers instead of hardcoding them ────
-        // Content-Length matters for the frontend's blob fetch to assemble
-        // the file correctly. Don't force chunked encoding over it.
-        res.setHeader("Content-Type", dockerResponse.headers["content-type"] || "video/mp4");
-        if (dockerResponse.headers["content-length"]) {
-            res.setHeader("Content-Length", dockerResponse.headers["content-length"]);
+        const responseData = dockerResponse.data;
+
+        console.log(responseData)
+
+        // ── Parse tokens sent from Flask JSON payload ───────────
+        const promptTokens = parseInt(responseData.input_tokens || "0", 10);
+        const candidatesTokens = parseInt(responseData.output_tokens || "0", 10);
+        
+        let finalCreditsCost = 0;
+        if (!is_free_generation) {
+            if (promptTokens > 0 || candidatesTokens > 0) {
+                finalCreditsCost = calculateCreditsUsed(model_used, {
+                    prompt_token_count: promptTokens,
+                    candidates_token_count: candidatesTokens
+                });
+            } else {
+                finalCreditsCost = VIDEO_CREDIT_COST_FALLBACK;
+            }
         }
-        res.status(dockerResponse.status);
+
+        const remainingCreditsAfterSuccess = is_free_generation
+            ? (AI_Credit ?? 0)
+            : Math.max(0, (AI_Credit ?? 0) - finalCreditsCost);
+
+        // Finalize DB
+        await finalizeSuccess(finalCreditsCost);
+
+        // ── Return JSON to client ────────────────────────────────
         res.setHeader("X-AI-Credits-Remaining", String(remainingCreditsAfterSuccess));
         res.setHeader("Access-Control-Expose-Headers", "X-AI-Credits-Remaining");
-        res.status(dockerResponse.status);
-
-        let settled = false;
-
-        dockerResponse.data.on("end", () => {
-            if (!settled) {
-                settled = true;
-                finalizeSuccess().catch((e) =>
-                    console.error("Failed to finalize video_generation success:", e.message)
-                );
-            }
-        });
-
-        dockerResponse.data.on("error", (streamErr) => {
-            if (!settled) {
-                settled = true;
-                finalizeFailure(streamErr.message).catch((e) =>
-                    console.error("Failed to finalize video_generation failure:", e.message)
-                );
-            }
-        });
-
-        dockerResponse.data.pipe(res);
-
-        req.on("close", () => {
-            if (dockerResponse.data && typeof dockerResponse.data.destroy === "function") {
-                dockerResponse.data.destroy();
-            }
-            if (!settled) {
-                settled = true;
-                finalizeFailure("Client disconnected before stream completed.").catch((e) =>
-                    console.error("Failed to finalize video_generation failure:", e.message)
-                );
-            }
+        
+        return res.status(200).json({
+            video_url: responseData.video_url,
+            video_path: responseData.video_path,
+            credits_remaining: remainingCreditsAfterSuccess
         });
 
     } catch (error) {
-        console.error("Flask video generation error:", error.message);
-        await finalizeFailure(error.message);
+        // Handle Axios errors (including 500s from Flask)
+        const errorMessage = error.response?.data?.message || error.message || "Unknown error";
+        console.error("Flask video generation error:", errorMessage);
+        
+        await finalizeFailure(errorMessage);
+        
         if (!res.headersSent) {
-            return res.status(502).json({ error: "Failed to connect to Flask video generation server." });
+            return res.status(502).json({ 
+                error: "Failed to generate video.",
+                details: errorMessage
+            });
         }
-        res.end();
     }
 });
 
 module.exports = {
-    //   generateAIVideo, // your pre-existing method
     streamAIExplanationVideo
 };
-

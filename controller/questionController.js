@@ -112,7 +112,8 @@ const saveQuestionMarks = asyncHandler(async (req, res) => {
     req.body;
 
   // ─── 1. Auth ────────────────────────────────────────────────────────────────
-  const token = req.cookies?.access_token;
+  const authHeader = req.headers.authorization;
+  const token = authHeader ? authHeader.split(" ")[1] : req.cookies?.access_token;
   if (!token)
     return res.status(401).json({ error: "Missing or invalid token." });
 

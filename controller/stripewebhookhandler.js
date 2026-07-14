@@ -11,13 +11,16 @@ const PRICE_IDS = {
     academic_excellence: process.env.STRIPE_PRICE_EXCELLENCE  || "price_1Td44gRv5XPjIybS4Gv43ibj",
 };
 
-// AI credits allocated per plan
+// AI credits allocated per plan (full monthly wallet amount)
 const PLAN_AI_CREDITS = {
-    self_study:          100,
-    student_pro:         500,
+    self_study:          4000,
+    student_pro:         10000,
     academic_excellence: 2500,
-    free:                0,
+    free:                50,
 };
+
+// Trial allocation
+const TRIAL_AI_CREDITS = 1000;
 
 /* ===================================================================
    EMAIL CONFIGURATION (NODEMAILER)
@@ -51,6 +54,7 @@ const stripewebhookhandler = asyncHandler(async (req, res) => {
     switch (event.type) {
 
         // ── Case A: Initial purchase or trial start ───────────────
+        // Fresh subscription -> wallet starts at the full plan amount OR trial amount.
         case "checkout.session.completed": {
             const userId         = dataObject.client_reference_id;
             const subscriptionId = dataObject.subscription;
@@ -74,11 +78,16 @@ const stripewebhookhandler = asyncHandler(async (req, res) => {
                 currentPeriodStart: subscription.current_period_start,
                 currentPeriodEnd:   subscription.current_period_end,
                 trialEnd:           subscription.trial_end,
+                resetCredits:       "always", // brand-new subscription, fill wallet
             });
             break;
         }
 
         // ── Case B: Upgrades, downgrades, cancellations ───────────
+        // Only touch the credit wallet if the PLAN actually changed.
+        // This event also fires for incidental things (cancel_at_period_end
+        // toggling, payment method updates, etc.) that must NOT wipe
+        // a student's remaining balance mid-cycle.
         case "customer.subscription.updated": {
             const subscriptionId   = dataObject.id;
             const stripeCustomerId = dataObject.customer;
@@ -102,6 +111,7 @@ const stripewebhookhandler = asyncHandler(async (req, res) => {
                 currentPeriodStart: dataObject.current_period_start,
                 currentPeriodEnd:   dataObject.current_period_end,
                 trialEnd:           dataObject.trial_end,
+                resetCredits:       "on_plan_change", // preserve balance unless plan changed
             });
             break;
         }
@@ -114,6 +124,8 @@ const stripewebhookhandler = asyncHandler(async (req, res) => {
         }
 
         // ── Case D: Payment Succeeded (Renewals) ──────────────────
+        // This is the real "new billing cycle" signal -> top the wallet
+        // back up to the plan's full monthly amount.
         case "invoice.payment_succeeded": {
             const subscriptionId = dataObject.subscription;
             if (!subscriptionId) break; // Ignore one-off invoices, focus on subscriptions
@@ -134,6 +146,7 @@ const stripewebhookhandler = asyncHandler(async (req, res) => {
                     currentPeriodStart: subscription.current_period_start,
                     currentPeriodEnd:   subscription.current_period_end,
                     trialEnd:           subscription.trial_end,
+                    resetCredits:       "always", // fresh billing cycle -> full top-up
                 });
                 console.log(`✅ Invoice paid & subscription renewed for user: ${userId}`);
             }
@@ -143,11 +156,11 @@ const stripewebhookhandler = asyncHandler(async (req, res) => {
         // ── Case E: Payment Failed (Send Email) ───────────────────
         case "invoice.payment_failed": {
             console.log(`⚠️ Payment failed for customer: ${dataObject.customer}`);
-            
+
             // Stripe usually provides the customer_email on the invoice object
             let customerEmail = dataObject.customer_email;
             const hostedInvoiceUrl = dataObject.hosted_invoice_url; // URL where they can pay manually
-            
+
             // If email isn't on the invoice, fetch the customer directly
             if (!customerEmail) {
                 try {
@@ -177,7 +190,7 @@ const stripewebhookhandler = asyncHandler(async (req, res) => {
 async function sendPaymentFailedEmail(email, invoiceUrl) {
     try {
         await transporter.sendMail({
-            from: `"Your App Name" <${process.env.SMTP_USER}>`, 
+            from: `"Your App Name" <${process.env.SMTP_USER}>`,
             to: email,
             subject: "Action Required: Your subscription payment failed",
             html: `
@@ -202,6 +215,14 @@ async function sendPaymentFailedEmail(email, invoiceUrl) {
 /* ===================================================================
    DATABASE ABSTRACTIONS
    =================================================================== */
+
+/**
+ * resetCredits controls how the AI_Credit wallet is touched:
+ *   "always"        - hard-set to the full plan amount (new subscription / renewal)
+ *   "on_plan_change" - only touch AI_Credit if the resolved plan actually changed
+ *                      from what's currently stored (upgrade/downgrade); otherwise
+ *                      leave the student's current balance untouched
+ */
 async function upsertSubscription({
     userId,
     subscriptionId,
@@ -212,6 +233,7 @@ async function upsertSubscription({
     currentPeriodStart,
     currentPeriodEnd,
     trialEnd,
+    resetCredits = "always",
 }) {
     const hasActiveAccess = ["active", "trialing"].includes(status);
     const isTrialing      = status === "trialing";
@@ -222,9 +244,6 @@ async function upsertSubscription({
     if (priceId === PRICE_IDS.academic_excellence) internalPlanType = "academic_excellence";
 
     const resolvedPlan = hasActiveAccess ? internalPlanType : "free";
-
-    // Assign AI credits based on plan — only on active payment
-    const aiCredits = hasActiveAccess ? (PLAN_AI_CREDITS[resolvedPlan] ?? 0) : 0;
 
     // Convert Unix timestamps to ISO strings for Supabase
     const subscriptionStart = currentPeriodStart
@@ -237,8 +256,40 @@ async function upsertSubscription({
         ? new Date(trialEnd * 1000).toISOString()
         : null;
 
+    // Decide whether (and how) to touch the AI_Credit wallet
+    let creditUpdate = {}; // empty = leave AI_Credit untouched
+
+    if (!hasActiveAccess) {
+        // Subscription lapsed/incomplete/etc — no active paid access
+        creditUpdate = { AI_Credit: 0 };
+    } else if (resetCredits === "always") {
+        creditUpdate = { 
+            AI_Credit: isTrialing ? TRIAL_AI_CREDITS : (PLAN_AI_CREDITS[resolvedPlan] ?? 0) 
+        };
+    } else if (resetCredits === "on_plan_change") {
+        const { data: existing, error: fetchError } = await supabase
+            .from("Student")
+            .select("plan_type")
+            .eq("id", userId)
+            .maybeSingle();
+
+        if (fetchError) {
+            console.error("❌ Error fetching existing student for plan comparison:", fetchError.message);
+        }
+
+        const planChanged = !existing || existing.plan_type !== resolvedPlan;
+        if (planChanged) {
+            creditUpdate = { 
+                AI_Credit: isTrialing ? TRIAL_AI_CREDITS : (PLAN_AI_CREDITS[resolvedPlan] ?? 0) 
+            };
+            console.log(`🔁 Plan changed for ${userId}: ${existing?.plan_type ?? "unknown"} -> ${resolvedPlan}. Resetting wallet.`);
+        } else {
+            console.log(`↔️ Plan unchanged for ${userId} (${resolvedPlan}). Preserving current AI_Credit balance.`);
+        }
+    }
+
     console.log(`🔄 Upserting subscription for User ${userId}:`);
-    console.log(`   plan_type: ${resolvedPlan} | status: ${status} | AI_Credit: ${aiCredits}`);
+    console.log(`   plan_type: ${resolvedPlan} | status: ${status} | credit_update: ${JSON.stringify(creditUpdate)}`);
 
     const { error } = await supabase
         .from("Student")
@@ -256,7 +307,7 @@ async function upsertSubscription({
             ...(subscriptionStart && { subscription_start: subscriptionStart }),
             ...(subscriptionEnd   && { subscription_end:   subscriptionEnd   }),
 
-            ...(hasActiveAccess && { AI_Credit: aiCredits }),
+            ...creditUpdate,
         })
         .eq("id", userId);
 
@@ -265,7 +316,7 @@ async function upsertSubscription({
         throw error;
     }
 
-    console.log(`✅ Student ${userId} updated — plan: ${resolvedPlan}, credits: ${aiCredits}`);
+    console.log(`✅ Student ${userId} updated — plan: ${resolvedPlan}`);
 }
 
 async function revokeSubscription(subscriptionId) {

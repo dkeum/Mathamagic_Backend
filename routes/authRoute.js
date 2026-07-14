@@ -21,6 +21,7 @@ if (process.env.NODE_ENV !== "DEVELOPMENT") {
   router.options("/login", (req, res) => res.sendStatus(204));
   router.options("/logout", (req, res) => res.sendStatus(204));
   router.options("/verify-email", (req, res) => res.sendStatus(204));
+  router.options("/auth/google-session", (req, res) => res.sendStatus(204));
 }
 
 // Actual route handlers
@@ -28,5 +29,6 @@ router.post("/signup", authController.signUp);
 router.post("/login", authController.login);
 router.post("/logout", authController.logOut);
 router.get("/verify-email", authController.verifyEmail);
+router.post("/auth/google-session", authController.googleSession);
 
 module.exports = router;

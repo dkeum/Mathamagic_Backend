@@ -258,16 +258,37 @@ const getProgress = asyncHandler(async (req, res) => {
 
   const sectionIds = sections.map((s) => s.id);
 
-  // ── Section progress ─────────────────────────────────────────
-  const { data: sectionProgress } = await supabase
-    .from("student_section_progress")
-    .select("section_id, mastery_score, completed, last_attempted_at")
-    .eq("student_ID", studentId)
-    .in("section_id", sectionIds);
+  // ── Section progress + question-attempt grades ────────────────
+  const [{ data: sectionProgress }, { data: questionAttempts }] = await Promise.all([
+    supabase
+      .from("student_section_progress")
+      .select("section_id, mastery_score, completed, last_attempted_at")
+      .eq("student_ID", studentId)
+      .in("section_id", sectionIds),
+
+    // NOTE: assumes student_question_attempt.section_id is populated directly.
+    // If attempts are only linked via question_id (no section_id on the row),
+    // this needs to join through `question` instead — flag if that's the case.
+    supabase
+      .from("student_question_attempt")
+      .select("section_id, is_correct")
+      .eq("student_ID", studentId)
+      .in("section_id", sectionIds),
+  ]);
 
   const progressMap = {};
   for (const p of sectionProgress || []) {
     progressMap[p.section_id] = p;
+  }
+
+  // Per-section grade built from actual question attempts: (# correct / # total) * 100
+  const sectionGradeMap = {}; // section_id -> { correct, total }
+  for (const qa of questionAttempts || []) {
+    if (!sectionGradeMap[qa.section_id]) {
+      sectionGradeMap[qa.section_id] = { correct: 0, total: 0 };
+    }
+    sectionGradeMap[qa.section_id].total += 1;
+    if (qa.is_correct) sectionGradeMap[qa.section_id].correct += 1;
   }
 
   // ── Current module ───────────────────────────────────────────
@@ -284,22 +305,35 @@ const getProgress = asyncHandler(async (req, res) => {
 
   // ── Build progressArray with topic mastery + section status ──
   let total_sections = 0;
-  let total_mastery = 0;
+  let attempted_sections = 0;      // sections with at least one graded question attempt
+  let attempted_mastery_sum = 0;   // sum of per-section (%correct) grades, only over attempted sections
+  let completed_sections = 0;      // sections marked completed
   let isFirstSectionGlobal = true;
 
   const progressArray = topics.map((topic) => {
     const topicSections = sections.filter((sec) => sec.topic_ID === topic.id);
-    const topicCount = topicSections.length;
     let topicMasterySum = 0;
+    let topicAttemptedCount = 0;
 
     const mappedSections = topicSections.map((sec) => {
       const p = progressMap[sec.id];
-      const mastery = p ? parseFloat(p.mastery_score) : 0;
       const isCompleted = p?.completed ?? false;
 
+      const grades = sectionGradeMap[sec.id];
+      const hasGrade = grades && grades.total > 0;
+      const sectionGrade = hasGrade ? (grades.correct / grades.total) * 100 : 0;
+
       total_sections += 1;
-      total_mastery += mastery;
-      topicMasterySum += mastery;
+
+      if (hasGrade) {
+        attempted_sections += 1;
+        attempted_mastery_sum += sectionGrade;
+        topicAttemptedCount += 1;
+        topicMasterySum += sectionGrade;
+      }
+      if (isCompleted) {
+        completed_sections += 1;
+      }
 
       let status = "todo";
       if (isCompleted) {
@@ -314,15 +348,16 @@ const getProgress = asyncHandler(async (req, res) => {
       return {
         section_name: sec.name,
         section_id: sec.id,
-        progress: p ? (isCompleted ? 1 : mastery / 100) : 0,
-        latest_grade: mastery,
+        progress: p ? (isCompleted ? 1 : sectionGrade / 100) : 0,
+        latest_grade: sectionGrade,
         completed: isCompleted,
         status,
         last_attempted_at: p?.last_attempted_at ?? null,
       };
     });
 
-    const topic_mastery = topicCount > 0 ? (topicMasterySum / topicCount) : 0;
+    // topic_mastery: average per-section question-attempt grade, only over attempted sections in this topic
+    const topic_mastery = topicAttemptedCount > 0 ? (topicMasterySum / topicAttemptedCount) : 0;
 
     return {
       topic_name: topic.name,
@@ -353,7 +388,7 @@ const getProgress = asyncHandler(async (req, res) => {
 
   let completion_progress, current_grade, time_logged_pct;
 
-  if (cacheAgeMinutes < 60 && cached_overall_grade != null) {
+  if (cacheAgeMinutes < 5 && cached_overall_grade != null) {
     current_grade = cached_overall_grade;
     completion_progress = cached_completion_pct;
     time_logged_pct =
@@ -366,9 +401,16 @@ const getProgress = asyncHandler(async (req, res) => {
         )
         : 0;
   } else {
-    completion_progress = total_sections > 0 ? (total_mastery / total_sections) : 0;
+    // completion_progress: % of ALL sections in the class marked completed
+    completion_progress = total_sections > 0
+      ? Math.round((completed_sections / total_sections) * 100)
+      : 0;
 
-    current_grade = completion_progress;
+    // current_grade: average of per-section (%correct) grades across sections actually attempted
+    current_grade = attempted_sections > 0
+      ? Math.round(attempted_mastery_sum / attempted_sections)
+      : 0;
+
     time_logged_pct =
       (timeCommitment || 0) > 0
         ? Math.min(
@@ -427,7 +469,6 @@ const getProgress = asyncHandler(async (req, res) => {
     step_by_step_free_available_today,
   });
 });
-
 // @ PUT
 // ROUTE /:topic/:section
 

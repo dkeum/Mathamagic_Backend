@@ -333,6 +333,8 @@ const verifyEmail = asyncHandler(async (req, res) => {
 // Called by the frontend right after Supabase's OAuth redirect completes.
 // Body: { access_token, refresh_token }
 const googleSession = asyncHandler(async (req, res) => {
+
+  // console.log("GOOGLE SESSION HIT");
   const { access_token, refresh_token } = req.body;
 
   if (!access_token) {
@@ -353,12 +355,12 @@ const googleSession = asyncHandler(async (req, res) => {
     const userEmail = user.email;
     const userId = user.id;
 
-    // Same "find or create" pattern as login()
+    // FIX: Use .maybeSingle() instead of .single() to avoid PGRST116 errors
     const { data: existingStudent, error: selectError } = await supabase
       .from("Student")
       .select("*")
       .eq("email", userEmail)
-      .single();
+      .maybeSingle();
 
     let studentData = existingStudent;
 

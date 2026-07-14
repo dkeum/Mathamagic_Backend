@@ -1,7 +1,8 @@
 // config/aiCredits.js
 const supabase = require("./supabaseClient");
 
-const CREDIT_VALUE_CAD = 5 / 1000;
+// Updated to 5 dollars per 4000 credits
+const CREDIT_VALUE_CAD = 5 / 4000;
 
 const MODEL_PRICING_USD = {
   "gemini-2.5-flash": { input: 0.30 / 1_000_000, output: 2.50 / 1_000_000 },
@@ -29,6 +30,9 @@ async function calculateCreditsUsed(model, usage) {
   const outputRate = (isLongContext && pricing.outputLong ? pricing.outputLong : pricing.output) * rate;
 
   const costCad = usage.promptTokenCount * inputRate + usage.candidatesTokenCount * outputRate;
+  
+  // The cost in CAD is divided by the new CREDIT_VALUE_CAD (0.00125) 
+  // to determine how many credits to deduct.
   return Math.ceil(costCad / CREDIT_VALUE_CAD);
 }
 

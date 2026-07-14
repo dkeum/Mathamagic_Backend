@@ -22,6 +22,7 @@ if (process.env.NODE_ENV !== "DEVELOPMENT") {
     router.options("/ai/verify-answers", (req, res) => res.sendStatus(204));
     router.options("/ai/verify-answer", (req, res) => res.sendStatus(204));
     router.options("/ai/chat", (req, res) => res.sendStatus(204));
+    router.options("/ai/read-question", (req, res) => res.sendStatus(204));
 
 
 }
@@ -31,5 +32,6 @@ if (process.env.NODE_ENV !== "DEVELOPMENT") {
 router.post("/ai/verify-answers", aiController.verifyAnswers);
 router.post("/ai/verify-answer", aiController.verifyAnswer);
 router.post("/ai/chat", aiController.chat);
+router.post("/ai/read-question", aiController.readQuestion)
 
 module.exports = router;

@@ -20,8 +20,13 @@
   ],
   "crons": [
     {
+      "path": "/cron/cleanup",
+      "schedule": "0 6 * * *"
+    },
+      {
       "path": "/cron/refresh-fx-rate",
       "schedule": "0 6 * * *"
     }
+
   ]
 }

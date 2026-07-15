@@ -432,7 +432,7 @@ const getSubscriptionStatus = asyncHandler(async (req, res) => {
         return res.status(200).json({ status: "no_subscription", active: false });
     }
 
-    const subscription = await stripe.subscriptions.retrieve(student.stripe_subscription_id);
+    const subscription = await stripe.subscriptions.retrieve(student.stripe_subscription_id.trim());
     const { end: periodEnd } = getSubscriptionPeriod(subscription);
 
     const isPaused = !!subscription.pause_collection;

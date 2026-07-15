@@ -30,6 +30,7 @@ if (process.env.NODE_ENV !== "DEVELOPMENT") {
   router.options("/payment/pause-subscription", (req, res) => res.sendStatus(204));
   router.options("/payment/resume-subscription", (req, res) => res.sendStatus(204));
   router.options("/payment/change-plan", (req, res) => res.sendStatus(204));
+   router.options("/payment/subscription-status", (req, res) => res.sendStatus(204));
 
 }
 

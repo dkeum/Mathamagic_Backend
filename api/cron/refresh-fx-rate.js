@@ -4,6 +4,8 @@ const refreshFxRate = async (req, res) => {
   // Vercel auto-injects CRON_SECRET as an env var and sends it as the
   // Authorization header on cron-triggered requests — verify it so
   // this endpoint can't be triggered by anyone who finds the URL.
+
+  console.log(req?.headers?.authorization)
   const authHeader = req.headers.authorization;
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return res.status(401).json({ message: "Unauthorized" });

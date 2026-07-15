@@ -72,11 +72,10 @@ app.get("/", (req, res) => {
 });
 
 app.use("/", require("./routes/publicAPI/contactRoute"));
+app.use("/", require("./routes/stripeRoute"))
 app.use("/", require("./routes/authRoute")); // Good for Serverless function
-app.use("/", require("./routes/settingRoute"))
 app.use("/", require("./routes/questionRoute"))
 app.use("/", require("./routes/homeworkHelpRoute"))
-app.use("/", require("./routes/stripeRoute"))
 app.use("/api/waitlist", require("./routes/waitListRoute")); // Linked to external controller for clean separation of concerns
 app.use("/", require("./routes/practiceTopicRoute"))
 app.use("/", require("./routes/trackDataRoute"))
@@ -85,7 +84,8 @@ app.use("/", require("./routes/lessonRoute"))
 app.use("/", require("./routes/AIVideoGenerateRoute"))
 app.use("/", require("./routes/AIRoute"))
 app.use("/", require("./routes/cronJobRoute"))
-app.use("/", require("./routes/userRoute"))
+app.use("/", require("./routes/settingRoute"))
+app.use("/", require("./routes/userRoute")) // keep at end
 
 
 app.listen(PORT, () => {

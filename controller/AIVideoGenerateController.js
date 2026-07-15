@@ -3,13 +3,12 @@ const asyncHandler = require("express-async-handler");
 const supabase = require("../config/supabaseClient");
 const { calculateCreditsUsed } = require("../config/aiCredits");
 
-const FREE_VIDEO_LIMIT_PER_DAY = 1;
 const VIDEO_CREDIT_COST_FALLBACK = 10; 
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /ai-video/stream-explanation 
 // Intercepts query data context, forwards to Docker, awaits JSON response,
-// Checks free-daily-use, falls back to AI_Credit, only charges on success
+// Checks AI_Credit, and only charges on success
 // ─────────────────────────────────────────────────────────────────────────────
 const streamAIExplanationVideo = asyncHandler(async (req, res) => {
     const { questionId, topicId, sectionId, questionText, topicName, sectionName } = req.query;
@@ -35,10 +34,10 @@ const streamAIExplanationVideo = asyncHandler(async (req, res) => {
         return res.status(401).json({ error: "Unauthorized user." });
     }
 
-    // ── Load student credit/plan/free-use state ───────────────────
+    // ── Load student credit/plan state ───────────────────
     const { data: studentData, error: studentError } = await supabase
         .from("Student")
-        .select("id, AI_Credit, plan_type, last_free_video_at")
+        .select("id, AI_Credit, plan_type")
         .eq("email", user.email)
         .single();
 
@@ -46,18 +45,10 @@ const streamAIExplanationVideo = asyncHandler(async (req, res) => {
         return res.status(404).json({ error: "Student not found." });
     }
 
-    const { id: studentId, AI_Credit, plan_type, last_free_video_at } = studentData;
+    const { id: studentId, AI_Credit, plan_type } = studentData;
 
-    // ── Determine free eligibility (resets daily) ─────────────────
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-
-    const isFreeAvailable = !last_free_video_at || new Date(last_free_video_at) < startOfToday;
-    let is_free_generation = false;
-
-    if (isFreeAvailable) {
-        is_free_generation = true;
-    } else if ((AI_Credit ?? 0) <= 0) { 
+    // ── Credit Guard ─────────────────────────────────────────────
+    if ((AI_Credit ?? 0) <= 0) { 
         return res.status(403).json({
             message: "Not Enough Credits",
             error: "Insufficient credits.",
@@ -78,7 +69,7 @@ const streamAIExplanationVideo = asyncHandler(async (req, res) => {
             student_id: studentId,
             section_id: sectionId || null,
             status: "pending",
-            is_free_generation,
+            is_free_generation: false,
             ai_tier,
             model_used, 
             credits_charged: 0,
@@ -95,33 +86,28 @@ const streamAIExplanationVideo = asyncHandler(async (req, res) => {
 
     // ── Helpers to finalize the row ───────────────────────────────
     const finalizeSuccess = async (calculatedCredits) => {
-        const creditsCharged = is_free_generation ? 0 : calculatedCredits;
-
         await supabase
             .from("video_generation")
             .update({
                 status: "success",
-                credits_charged: creditsCharged,
+                credits_charged: calculatedCredits,
                 completed_at: new Date().toISOString(),
             })
             .eq("id", videoGenId);
 
-        if (is_free_generation) {
-            await supabase
-                .from("Student")
-                .update({ last_free_video_at: new Date().toISOString() })
-                .eq("id", studentId);
-        } else if (creditsCharged > 0) {
+        if (calculatedCredits > 0) {
             const { data: remaining, error: rpcError } = await supabase.rpc("deduct_ai_credit", {
                 p_student_id: studentId,
-                p_amount: creditsCharged,
+                p_amount: calculatedCredits,
             });
             if (rpcError) {
                 console.error("Credit deduction failed via RPC during video generation:", rpcError);
+                // Fallback to local math if the RPC has a connection issue
+                return Math.max(0, (AI_Credit ?? 0) - calculatedCredits);
             }
-            return remaining;
+            return remaining; // Return the exact balance from the database
         }
-        return null;
+        return AI_Credit ?? 0;
     };
 
     const finalizeFailure = async (errorMessage) => {
@@ -139,7 +125,7 @@ const streamAIExplanationVideo = asyncHandler(async (req, res) => {
     try {
         const dockerResponse = await axios({
             method: "post",
-            url: "http://localhost:5000/generate-video",
+            url: `${process.env.VIDEO_SERVICE_URL}/generate-video`,
             data: {
                 student_question: (() => {
                     try { return decodeURIComponent(questionText || ""); }
@@ -168,30 +154,24 @@ const streamAIExplanationVideo = asyncHandler(async (req, res) => {
 
         const responseData = dockerResponse.data;
 
-        console.log(responseData)
+        console.log(responseData);
 
         // ── Parse tokens sent from Flask JSON payload ───────────
         const promptTokens = parseInt(responseData.input_tokens || "0", 10);
         const candidatesTokens = parseInt(responseData.output_tokens || "0", 10);
         
         let finalCreditsCost = 0;
-        if (!is_free_generation) {
-            if (promptTokens > 0 || candidatesTokens > 0) {
-                finalCreditsCost = calculateCreditsUsed(model_used, {
-                    prompt_token_count: promptTokens,
-                    candidates_token_count: candidatesTokens
-                });
-            } else {
-                finalCreditsCost = VIDEO_CREDIT_COST_FALLBACK;
-            }
+        if (promptTokens > 0 || candidatesTokens > 0) {
+            finalCreditsCost = calculateCreditsUsed(model_used, {
+                prompt_token_count: promptTokens,
+                candidates_token_count: candidatesTokens
+            });
+        } else {
+            finalCreditsCost = VIDEO_CREDIT_COST_FALLBACK;
         }
 
-        const remainingCreditsAfterSuccess = is_free_generation
-            ? (AI_Credit ?? 0)
-            : Math.max(0, (AI_Credit ?? 0) - finalCreditsCost);
-
-        // Finalize DB
-        await finalizeSuccess(finalCreditsCost);
+        // Finalize DB updates and deduct user credits
+        const remainingCreditsAfterSuccess = await finalizeSuccess(finalCreditsCost);
 
         // ── Return JSON to client ────────────────────────────────
         res.setHeader("X-AI-Credits-Remaining", String(remainingCreditsAfterSuccess));

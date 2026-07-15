@@ -7,7 +7,7 @@ const applyCustomCors = (router) => {
     const setCorsHeaders = (req, res, next) => {
       res.setHeader("Access-Control-Allow-Origin", "https://mathmagick.com");
       res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type", "Authorization");
       res.setHeader("Access-Control-Allow-Credentials", "true");
       next();
     };

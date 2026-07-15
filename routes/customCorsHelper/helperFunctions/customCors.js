@@ -29,7 +29,7 @@ const applyCustomCors = (router) => {
     router.use(setCorsHeaders);
 
     // This wildcard catches ALL preflight OPTIONS requests for this router
-    router.options("*", (req, res) => res.sendStatus(204));
+    router.options("/{*splat}", (req, res) => res.sendStatus(204));
   }
 };
 

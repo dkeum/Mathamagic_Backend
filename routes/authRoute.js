@@ -5,27 +5,27 @@ const authController = require("../controller/authController");
 const applyCustomCors = require("./customCorsHelper/helperFunctions/customCors");
 
 // // Only apply CORS and OPTIONS routes if NOT in development mode
-// if (process.env.NODE_ENV !== "DEVELOPMENT") {
-//   const setCorsHeaders = (req, res, next) => {
-//     // res.setHeader("Access-Control-Allow-Origin", "https://mathamagic.vercel.app");
-//      res.setHeader("Access-Control-Allow-Origin", "https://mathmagick.com");
-//     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-//     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-//     res.setHeader("Access-Control-Allow-Credentials", "true");
-//     next();
-//   };
+if (process.env.NODE_ENV !== "DEVELOPMENT") {
+  const setCorsHeaders = (req, res, next) => {
+    // res.setHeader("Access-Control-Allow-Origin", "https://mathamagic.vercel.app");
+     res.setHeader("Access-Control-Allow-Origin", "https://mathmagick.com");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    next();
+  };
 
-//   router.use(setCorsHeaders);
+  router.use(setCorsHeaders);
 
-//   // OPTIONS handlers for preflight requests
-//   router.options("/signup", (req, res) => res.sendStatus(204));
-//   router.options("/login", (req, res) => res.sendStatus(204));
-//   router.options("/logout", (req, res) => res.sendStatus(204));
-//   router.options("/verify-email", (req, res) => res.sendStatus(204));
-//   router.options("/auth/google-session", (req, res) => res.sendStatus(204));
-// }
+  // OPTIONS handlers for preflight requests
+  router.options("/signup", (req, res) => res.sendStatus(204));
+  router.options("/login", (req, res) => res.sendStatus(204));
+  router.options("/logout", (req, res) => res.sendStatus(204));
+  router.options("/verify-email", (req, res) => res.sendStatus(204));
+  router.options("/auth/google-session", (req, res) => res.sendStatus(204));
+}
 
-applyCustomCors(router)
+// applyCustomCors(router)
 
 // Actual route handlers
 router.post("/signup", authController.signUp);

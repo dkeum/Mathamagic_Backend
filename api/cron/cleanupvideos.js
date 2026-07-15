@@ -3,6 +3,7 @@ const supabase = require("../../config/supabaseClient");
 async function cleanUpOldVideos(req, res) {
   // 1. Vercel Cron Security Check
   // Vercel will send your CRON_SECRET in the Authorization header.
+  console/log(req?.headers?.authorization)
   if (req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
     return res.status(401).json({ error: "Unauthorized access" });
   }

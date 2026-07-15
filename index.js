@@ -11,7 +11,7 @@ const app = express();
 // middleware
 const allowedOrigins = [
   "http://localhost:5173",
-  "https://mathamagic.vercel.app",
+  // "https://mathamagic.vercel.app",
   "https://mathmagick.com",
 ];
 

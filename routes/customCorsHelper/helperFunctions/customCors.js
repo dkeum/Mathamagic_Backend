@@ -7,7 +7,6 @@ const applyCustomCors = (router) => {
     // Define the exact origins you want to allow
     const allowedOrigins = [
       "https://mathmagick.com",
-      "https://mathamagic.vercel.app"
     ];
     
     const setCorsHeaders = (req, res, next) => {

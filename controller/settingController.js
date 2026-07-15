@@ -59,26 +59,24 @@ const updateUser = asyncHandler(async (req, res) => {
 
 // @ PUT
 // ROUTE: /user/setname
-
 const setName = asyncHandler(async (req, res) => {
-  const { name } = req.body;
 
-  console.log(name);
+  console.log("setName is reached")
+  const { name } = req.body;
 
   if (!name || name.trim() === "") {
     return res.status(400).json({ error: "Name is required." });
   }
 
-  // Extract token from cookie or Authorization header
-  const token = req.cookies?.access_token;
+  // Accept either a Bearer token or the access_token cookie —
+  // matches the pattern used elsewhere (e.g. getSettingProfile).
+  const authHeader = req.headers.authorization;
+  const token = authHeader ? authHeader.split(" ")[1] : req.cookies?.access_token;
 
   if (!token) {
     return res.status(401).json({ error: "Missing or invalid token." });
   }
 
-  //   console.log(token)
-
-  // Verify user token
   const {
     data: { user },
     error: userError,
@@ -88,9 +86,6 @@ const setName = asyncHandler(async (req, res) => {
     return res.status(401).json({ error: "Unauthorized user." });
   }
 
-  //   console.log(user.email, name)
-
-  // Update name in the profiles table
   const { error: updateError } = await supabase
     .from("Student")
     .update({ name: name.trim() })
@@ -101,16 +96,8 @@ const setName = asyncHandler(async (req, res) => {
     return res.status(500).json({ error: "Failed to update name." });
   }
 
-  const { data: data1, error1 } = await supabase
-    .from("Student")
-    .select("name")
-    .eq("email", user.email);
-
-  console.log(data1);
-
   return res.status(200).json({ message: "Name updated successfully." });
 });
-
 
 // @ PUT
 // ROUTE: /update-profile-info

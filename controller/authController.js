@@ -334,7 +334,6 @@ const verifyEmail = asyncHandler(async (req, res) => {
 // Body: { access_token, refresh_token }
 const googleSession = asyncHandler(async (req, res) => {
 
-  // console.log("GOOGLE SESSION HIT");
   const { access_token, refresh_token } = req.body;
 
   if (!access_token) {
@@ -407,12 +406,18 @@ const googleSession = asyncHandler(async (req, res) => {
       maxAge: 60 * 60 * 24 * 1000, // 1 day
     });
 
+    // A student is considered onboarded once they have a class/grade set —
+    // used by the frontend to decide whether to send them through the
+    // onboarding survey or straight to their profile.
+    const hasClass = !!studentData?.class && studentData.class !== "NULL";
+
     return res.status(200).json({
       message: "Google login successful",
       user,
       student: studentData,
       access_token,
       refresh_token,
+      hasClass,
     });
   } catch (err) {
     console.error("Google session error:", err);

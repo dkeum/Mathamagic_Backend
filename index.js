@@ -16,8 +16,7 @@ const allowedOrigins = [
 ];
 
 
-// 1. Import the router file at the top of your file
-const stripeWebhookRouter = require("./routes/stripeWebhook");
+
 
 app.use(cors({
   origin: function (origin, callback) {
@@ -32,18 +31,34 @@ app.use(cors({
   },
   credentials: true,
   allowedHeaders: ['Content-Type', 'Authorization'],
-  exposedHeaders: ['X-AI-Credits-Remaining'], 
+  exposedHeaders: ['X-AI-Credits-Remaining'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
 }));
 
-
-// STRIPE WEBHOOKS REQUIRE RAW BODY, so we will apply the raw body parser only to the webhook route in server.js
-app.post(
-  '/payment/webhook',
-  express.raw({ type: 'application/json' }),
-  stripeWebhookRouter
+// Stripe webhook MUST come BEFORE express.json()
+app.use(
+  "/payment/webhook",
+  express.raw({ type: "application/json" }),
+  (req, res, next) => {
+    console.log("🔥 Received request on /payment/webhook");
+    console.log("Method:", req.method);
+    console.log("Headers:", req.headers);
+    next();
+  }
 );
 
+app.use(
+  "/test/stripewebhook",
+  express.raw({ type: "application/json" }),
+  (req, res, next) => {
+    console.log("🔥 Received request on /test/stripewebhook");
+    console.log("Method:", req.method);
+    console.log("Headers:", req.headers);
+    next();
+  }
+);
+// Mount webhook routes
+app.use("/", require("./routes/stripeWebhook"));
 
 
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -58,7 +73,7 @@ app.get("/", (req, res) => {
 
 app.use("/", require("./routes/publicAPI/contactRoute"));
 app.use("/", require("./routes/authRoute")); // Good for Serverless function
-app.use("/", require("./routes/userRoute"))
+app.use("/", require("./routes/settingRoute"))
 app.use("/", require("./routes/questionRoute"))
 app.use("/", require("./routes/homeworkHelpRoute"))
 app.use("/", require("./routes/stripeRoute"))
@@ -68,9 +83,9 @@ app.use("/", require("./routes/trackDataRoute"))
 app.use("/", require("./routes/finalExamRoute"))
 app.use("/", require("./routes/lessonRoute"))
 app.use("/", require("./routes/AIVideoGenerateRoute"))
-app.use("/", require("./routes/settingRoute"))
 app.use("/", require("./routes/AIRoute"))
 app.use("/", require("./routes/cronJobRoute"))
+app.use("/", require("./routes/userRoute"))
 
 
 app.listen(PORT, () => {

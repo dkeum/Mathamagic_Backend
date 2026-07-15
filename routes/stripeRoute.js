@@ -27,6 +27,9 @@ if (process.env.NODE_ENV !== "DEVELOPMENT") {
   router.options("/payment/create-checkout-session", (req, res) => res.sendStatus(204));
   router.options("/payment/cancel-subscription", (req, res) => res.sendStatus(204));
   router.options("/payment/subscription-status", (req, res) => res.sendStatus(204));
+  router.options("/payment/pause-subscription", (req, res) => res.sendStatus(204));
+  router.options("/payment/resume-subscription", (req, res) => res.sendStatus(204));
+  router.options("/payment/change-plan", (req, res) => res.sendStatus(204));
 
 }
 
@@ -41,6 +44,21 @@ router.post(
 router.post(
     "/payment/cancel-subscription",
     stripeController.cancelSubscription
+);
+
+router.post(
+    "/payment/pause-subscription",
+    stripeController.pauseSubscription
+);
+
+router.post(
+    "/payment/resume-subscription",
+    stripeController.resumeSubscription
+);
+
+router.post(
+    "/payment/change-plan",
+    stripeController.changePlan
 );
 
 router.get(

@@ -583,9 +583,97 @@ const saveSession = asyncHandler(async (req, res) => {
   res.status(200).json({ message: "Session saved successfully" });
 });
 
+// @ POST
+// ROUTE: /update-userprofile
+// Body: { answers: [subject, gradeLevel, className, desiredGrade, timeCommitmentLabel], access_token }
+const setDataFromSurvey = asyncHandler(async (req, res) => {
+  const { answers, access_token } = req.body;
+
+  const authHeader = req.headers.authorization;
+  const token = authHeader ? authHeader.split(" ")[1] : req.cookies?.access_token;
+  if (!token) {
+    return res.status(401).json({ error: "Missing or invalid token." });
+  }
+
+  // console.log(answers)
+  if (!Array.isArray(answers) || answers.length !== 5) {
+    return res.status(400).json({ error: "Malformed survey answers." });
+  }
+
+  // Validate the token and identify the user
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser(token);
+
+  if (userError || !user) {
+    return res.status(401).json({ error: "Unauthorized user." });
+  }
+
+  const email = user.email;
+
+  const [subject, gradeLevel, className, desiredGradeLabel, timeCommitmentLabel] = answers;
+
+  // ── Look up Class_ID from the selected class name ─────────────
+  const { data: classRow, error: classLookupError } = await supabase
+    .from("Class")
+    .select("id")
+    .eq("name", className)
+    .maybeSingle();
+
+  if (classLookupError) {
+    console.error("Class lookup failed:", classLookupError);
+    return res.status(500).json({ error: "Failed to resolve selected class." });
+  }
+
+  if (!classRow) {
+    // The student picked a class name that doesn't exist in the Class table
+    // (e.g. the "No classes available for that combination" placeholder,
+    // or the CLASS_MAP and Class table have drifted out of sync).
+    return res.status(400).json({
+      error: `No matching class found for "${className}". Please contact support.`,
+    });
+  }
+
+  // ── Convert the time-commitment label into a numeric hours/week value ──
+  const TIME_COMMITMENT_MAP = {
+    "0-3 hours": 2,
+    "3-5 hours": 4,
+    "Over 5 hours": 6,
+  };
+  const timeCommitmentHours = TIME_COMMITMENT_MAP[timeCommitmentLabel] ?? null;
+
+  if (timeCommitmentHours === null) {
+    return res.status(400).json({ error: "Invalid time commitment selection." });
+  }
+
+  // ── Persist everything to the Student row ──────────────────────
+  const { data: updatedStudent, error: updateError } = await supabase
+    .from("Student")
+    .update({
+      class: className,
+      grade: gradeLevel,
+      desired_grade: desiredGradeLabel,
+      time_commitment: timeCommitmentHours,
+      Class_ID: classRow.id,
+    })
+    .eq("email", email)
+    .select()
+    .single();
+
+  if (updateError || !updatedStudent) {
+    console.error("Failed to update student profile from survey:", updateError);
+    return res.status(500).json({ error: "Failed to save profile details." });
+  }
+
+  return res.status(200).json({
+    message: "Profile updated successfully.",
+    student: updatedStudent,
+  });
+});
 
 module.exports = {
-
+  setDataFromSurvey,
   getProgress,
   saveSession,
   updateGrades,

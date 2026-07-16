@@ -123,6 +123,8 @@ const streamAIExplanationVideo = asyncHandler(async (req, res) => {
 
     // ── Call Flask Pipeline ────────────────────────────────────────
     try {
+
+        console.log(process.env.INTERNAL_SERVICE_KEY)
         const dockerResponse = await axios({
             method: "post",
             url: `${process.env.VIDEO_SERVICE_URL}/generate-video`,
@@ -201,6 +203,7 @@ const streamAIExplanationVideo = asyncHandler(async (req, res) => {
         }
     }
 });
+
 
 module.exports = {
     streamAIExplanationVideo

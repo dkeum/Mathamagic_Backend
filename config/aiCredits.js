@@ -10,6 +10,7 @@ const MODEL_PRICING_USD = {
     input: 1.25 / 1_000_000, output: 10.00 / 1_000_000,
     inputLong: 2.50 / 1_000_000, outputLong: 15.00 / 1_000_000,
   },
+  "gemini-3.5-flash": { input: 1.50 / 1_000_000, output: 9.00 / 1_000_000 },
 };
 
 const PLAN_CREDIT_ALLOWANCE = { free: 1000, pro: 2000 };

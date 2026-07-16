@@ -60,7 +60,7 @@ const streamAIExplanationVideo = asyncHandler(async (req, res) => {
     // ── Tier → model selection ─────────────────────────────────────
     const isPro = plan_type === "pro";
     const ai_tier = isPro ? "pro" : "free";
-    const model_used = isPro ? "gemini-2.5-pro" : "gemini-2.5-flash";
+    const model_used = "gemini-3.5-flash";
 
     // ── Log a pending video_generation row ──────────────────────────
     const { data: videoGenRow, error: videoGenError } = await supabase
@@ -162,16 +162,19 @@ const streamAIExplanationVideo = asyncHandler(async (req, res) => {
         
         let finalCreditsCost = 0;
         if (promptTokens > 0 || candidatesTokens > 0) {
-            finalCreditsCost = calculateCreditsUsed(model_used, {
-                prompt_token_count: promptTokens,
-                candidates_token_count: candidatesTokens
+            finalCreditsCost = await calculateCreditsUsed(model_used, {
+                promptTokenCount: promptTokens,
+                candidatesTokenCount: candidatesTokens
             });
+            finalCreditsCost = Math.max(1, finalCreditsCost); // never charge less than 1 credit
         } else {
             finalCreditsCost = VIDEO_CREDIT_COST_FALLBACK;
         }
 
         // Finalize DB updates and deduct user credits
         const remainingCreditsAfterSuccess = await finalizeSuccess(finalCreditsCost);
+
+        console.log(remainingCreditsAfterSuccess)
 
         // ── Return JSON to client ────────────────────────────────
         res.setHeader("X-AI-Credits-Remaining", String(remainingCreditsAfterSuccess));

@@ -73,8 +73,8 @@ const createCheckoutSession = asyncHandler(async (req, res) => {
 
     const { email, plan } = req.body;
 
-    console.log("Processing request data payload:");
-    console.log(userId, email, plan);
+    // console.log("Processing request data payload:");
+    // console.log(userId, email, plan);
 
     if (!email) {
         return res.status(400).json({ error: "Email is required" });
@@ -431,7 +431,7 @@ const getSubscriptionStatus = asyncHandler(async (req, res) => {
     if (!student?.stripe_subscription_id) {
         return res.status(200).json({ status: "no_subscription", active: false });
     }
-
+    console.log("the is the sub_id:", student.stripe_subscription_id.trim() , "ZZZZZZZZZZZZZZZZZZz")
     const subscription = await stripe.subscriptions.retrieve(student.stripe_subscription_id.trim());
     const { end: periodEnd } = getSubscriptionPeriod(subscription);
 

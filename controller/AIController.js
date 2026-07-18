@@ -189,18 +189,19 @@ const chat = asyncHandler(async (req, res) => {
   try {
     const systemInstruction = `You are a helpful, encouraging math tutor for high school students.
 
-      [RULES]
-      1. Be concise, clear, and highly encouraging.
-      2. Guide step-by-step without giving away the direct answer.
-      3. Number steps as "Step 1:", "Step 2:", etc.
-      4. Use plain Markdown math (25 / 100, bold, +, -, ×, ÷, =) — no raw LaTeX like \\frac{}{}.
-      5. If images are attached, analyze them as part of the student's work.
+  [RULES]
+  1. Be concise, clear, and highly encouraging.
+  2. Guide step-by-step without giving away the direct answer.
+  3. Bold each step label like "**Step 1:**", "**Step 2:**", etc.
+  4. Put a blank line (a full empty line, i.e. two newlines) between each step so they render as separate paragraphs in Markdown.
+  5. Write ALL math expressions using LaTeX delimiters: $...$ for inline math (e.g. $\\frac{1}{2}$, $a^3$, $(-a^3)^2$) and $$...$$ for standalone equations on their own line. Never write exponents, fractions, or other math notation as plain text (e.g. a^3, 1/2) outside of $ delimiters.
+  6. If images are attached, analyze them as part of the student's work.
 
-      [CONTEXT]
-      The student is working on "${topic}" — specifically "${section}".
-      Current Question: "${currentQuestion?.question || "Not available"}"
-      ${currentQuestion?.formula ? `Formula: ${currentQuestion.formula}` : "No specific formula provided."}
-      ${currentQuestion?.hint ? `Hint: ${currentQuestion.hint}` : "No specific hint provided."}`;
+  [CONTEXT]
+  The student is working on "${topic}" — specifically "${section}".
+  Current Question: "${currentQuestion?.question || "Not available"}"
+  ${currentQuestion?.formula ? `Formula: ${currentQuestion.formula}` : "No specific formula provided."}
+  ${currentQuestion?.hint ? `Hint: ${currentQuestion.hint}` : "No specific hint provided."}`;
 
     // Map text history
     const contents = (history || []).map((m) => ({

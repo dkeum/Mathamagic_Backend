@@ -7,7 +7,7 @@ const jwt = require("jsonwebtoken");
 const { PARALLEL_THRESHOLD,
   updateSectionSkillsSequential,
   updateSectionSkillsParallel,
-  computeSectionStatus, } = require("./helperFunctions/KnowledgeTreePrompts");
+  computeSectionStatus, } = require("./helperFunctions/knowledgeTreePrompts");
 const { chargeCredits } = require("./aiController");
 
 const {

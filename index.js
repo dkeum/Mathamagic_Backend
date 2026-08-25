@@ -47,6 +47,56 @@ app.use(
   }
 );
 
+// 
+
+
+// app.post(
+//   "/test/stripewebhook",
+//   express.raw({ type: "application/json" }),
+//   (req, res) => {
+//     console.log("🔥🔥🔥 STRIPE WEBHOOK HIT");
+//     console.log("Method:", req.method);
+//     console.log("Stripe signature:", req.headers["stripe-signature"]);
+//     console.log("Body is Buffer:", Buffer.isBuffer(req.body));
+
+//     try {
+//       const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+
+//       const event = stripe.webhooks.constructEvent(
+//         req.body,
+//         req.headers["stripe-signature"],
+//         process.env.STRIPE_WEBHOOK_SECRET
+//       );
+
+//       console.log("✅ Stripe event verified:", event.type);
+
+//       switch (event.type) {
+//         case "checkout.session.completed": {
+//           const session = event.data.object;
+
+//           console.log("🎉 CHECKOUT COMPLETED");
+//           console.log("Session ID:", session.id);
+//           console.log("Customer:", session.customer);
+//           console.log("Email:", session.customer_details?.email);
+
+//           // Your database logic here
+
+//           break;
+//         }
+
+//         default:
+//           console.log("Unhandled event:", event.type);
+//       }
+
+//       return res.sendStatus(200);
+//     } catch (err) {
+//       console.error("❌ Stripe webhook error:", err.message);
+//       return res.sendStatus(400);
+//     }
+//   }
+// );
+
+
 app.use(
   "/test/stripewebhook",
   express.raw({ type: "application/json" }),
@@ -57,6 +107,8 @@ app.use(
     next();
   }
 );
+
+
 // Mount webhook routes
 app.use("/", require("./routes/stripeWebhook"));
 

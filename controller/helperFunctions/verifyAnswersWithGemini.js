@@ -3,7 +3,7 @@ const { calculateCreditsUsed } = require("../../config/aiCredits");
 
 // FIX 1: Remove vertexai: true if using a standard AI Studio API Key
 const genAI = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY, 
+  apiKey: process.env.GEMINI_API_KEY,
 });
 
 const PLAN_MODEL_MAP = {
@@ -11,7 +11,7 @@ const PLAN_MODEL_MAP = {
   pro: "gemini-2.5-pro",
 };
 
-const DEFAULT_MODEL = "gemini-2.5-flash";
+const DEFAULT_MODEL = "gemini-3.5-flash";
 
 function resolveModel(planType) {
   const key = String(planType || "").toLowerCase().trim();
@@ -57,7 +57,7 @@ ${JSON.stringify(attempts, null, 2)}`;
       response.usageMetadata
     );
 
-    console.log("this is the credits used: ",creditsUsed)
+    console.log("this is the credits used: ", creditsUsed)
 
     const remainingCredits = await chargeCredits(
       student.id,

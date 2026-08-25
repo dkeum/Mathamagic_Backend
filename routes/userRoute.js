@@ -39,5 +39,7 @@ router.get("/:user_email/getprofile", userController.getProgress);
 router.post("/save-session", userController.saveSession);
 router.post("/survey-details", userController.setDataFromSurvey);
 
+router.get("/generate-student-progress-report", userController.generateStudentProgressReport);
+router.get("/generate-student-knowledge-tree", userController.generateStudentKnowledgeTree);
 
 module.exports = router;

@@ -1,23 +1,27 @@
 const asyncHandler = require("express-async-handler");
 const nodemailer = require("nodemailer");
-const STRIPE_API_SECRET_KEY = process.env.STRIPE_API_SECRET_KEY;
-const stripe = require("stripe")(STRIPE_API_SECRET_KEY);
 const supabase = require("../config/supabaseClient");
-const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
+
+
+const isDev = process.env.NODE_ENV === "DEVELOPMENT";
+
+const STRIPE_API_SECRET_KEY = isDev ? process.env.STRIPE_API_SECRET_KEY : process.env.STRIPE_OFFICIAL_API_SK_KEY;
+
+const STRIPE_WEBHOOK_SECRET = isDev ? process.env.STRIPE_WEBHOOK_SECRET : process.env.STRIPE_OFFICIAL_WEBHOOK_SECRET;
+
+const stripe = require("stripe")(STRIPE_API_SECRET_KEY);
 
 
 
-// Reverse-lookup: Stripe price ID -> your internal plan key
-const IS_DEV = process.env.NODE_ENV === "DEVELOPMENT";
 
 const PRICE_IDS = {
     self_study: (
-        IS_DEV
+        isDev
             ? process.env.TEST_STRIPE_PRICE_SELF_STUDY
             : process.env.STRIPE_PRICE_SELF_STUDY
     )?.trim(),
     student_pro: (
-        IS_DEV
+        isDev
             ? process.env.TEST_STRIPE_PRICE_STUDENT_PRO
             : process.env.STRIPE_PRICE_STUDENT_PRO
     )?.trim(),
@@ -25,13 +29,13 @@ const PRICE_IDS = {
 
 // AI credits allocated per plan (full monthly wallet amount)
 const PLAN_AI_CREDITS = {
-    self_study:  4000,
+    self_study: 4000,
     student_pro: 10000,
-    free:        50,
+    free: 50,
 };
 
 // Trial allocation
-const TRIAL_AI_CREDITS = 1000;
+const TRIAL_AI_CREDITS = 100;
 
 // Newer Stripe API versions moved current_period_start/end off the
 // top-level Subscription object onto each subscription item. Check both
@@ -48,28 +52,29 @@ const getSubscriptionPeriod = (subscription) => {
    EMAIL CONFIGURATION (NODEMAILER)
    =================================================================== */
 const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.NOREPLY_GMAIL,
-    pass: process.env.NOREPLY_GMAIL_APP_PASSWORD,
-  },
+    service: "gmail",
+    auth: {
+        user: process.env.NOREPLY_GMAIL,
+        pass: process.env.NOREPLY_GMAIL_APP_PASSWORD,
+    },
 });
 
 /* ===================================================================
    WEBHOOK HANDLER
    =================================================================== */
 const stripewebhookhandler = asyncHandler(async (req, res) => {
-    const sig           = req.headers["stripe-signature"];
-    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    const sig = req.headers["stripe-signature"];
+    const webhookSecret = STRIPE_WEBHOOK_SECRET;
 
     let event;
     try {
-        // IMPORTANT: Ensure req.body is the raw buffer, not parsed JSON!
         event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
     } catch (err) {
         console.error(`❌ Webhook Signature Verification Failed: ${err.message}`);
         return res.status(400).send(`Webhook Error: ${err.message}`);
     }
+
+    console.log("🔔 Received Stripe webhook event:", event.type); // MOVED — now logs the real type
 
     const dataObject = event.data.object;
 
@@ -77,7 +82,7 @@ const stripewebhookhandler = asyncHandler(async (req, res) => {
 
         // ── Case A: Initial purchase or trial start ───────────────
         case "checkout.session.completed": {
-            const userId         = dataObject.client_reference_id;
+            const userId = dataObject.client_reference_id;
             const subscriptionId = dataObject.subscription;
             const stripeCustomerId = dataObject.customer;
 
@@ -87,7 +92,7 @@ const stripewebhookhandler = asyncHandler(async (req, res) => {
             }
 
             const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-            const priceId      = subscription.items.data[0].price.id;
+            const priceId = subscription.items.data[0].price.id;
             const { start: periodStart, end: periodEnd } = getSubscriptionPeriod(subscription);
 
             await upsertSubscription({
@@ -95,21 +100,21 @@ const stripewebhookhandler = asyncHandler(async (req, res) => {
                 subscriptionId,
                 stripeCustomerId,
                 priceId,
-                status:            subscription.status,
+                status: subscription.status,
                 cancelAtPeriodEnd: subscription.cancel_at_period_end,
                 currentPeriodStart: periodStart,
-                currentPeriodEnd:   periodEnd,
-                trialEnd:           subscription.trial_end,
-                resetCredits:       "always",
+                currentPeriodEnd: periodEnd,
+                trialEnd: subscription.trial_end,
+                resetCredits: "always",
             });
             break;
         }
 
         case "customer.subscription.updated": {
-            const subscriptionId   = dataObject.id;
+            const subscriptionId = dataObject.id;
             const stripeCustomerId = dataObject.customer;
-            const priceId          = dataObject.items.data[0].price.id;
-            const status           = dataObject.status;
+            const priceId = dataObject.items.data[0].price.id;
+            const status = dataObject.status;
             const cancelAtPeriodEnd = dataObject.cancel_at_period_end;
 
             let userId = await findUserIdBySubscriptionId(subscriptionId);
@@ -128,9 +133,9 @@ const stripewebhookhandler = asyncHandler(async (req, res) => {
                 status,
                 cancelAtPeriodEnd,
                 currentPeriodStart: periodStart,
-                currentPeriodEnd:   periodEnd,
-                trialEnd:           dataObject.trial_end,
-                resetCredits:       "on_plan_change",
+                currentPeriodEnd: periodEnd,
+                trialEnd: dataObject.trial_end,
+                resetCredits: "on_plan_change",
             });
             break;
         }
@@ -146,7 +151,7 @@ const stripewebhookhandler = asyncHandler(async (req, res) => {
             if (!subscriptionId) break;
 
             const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-            const priceId      = subscription.items.data[0].price.id;
+            const priceId = subscription.items.data[0].price.id;
             const { start: periodStart, end: periodEnd } = getSubscriptionPeriod(subscription);
 
             const userId = await findUserIdBySubscriptionId(subscriptionId);
@@ -156,12 +161,12 @@ const stripewebhookhandler = asyncHandler(async (req, res) => {
                     subscriptionId,
                     stripeCustomerId: dataObject.customer,
                     priceId,
-                    status:            subscription.status,
+                    status: subscription.status,
                     cancelAtPeriodEnd: subscription.cancel_at_period_end,
                     currentPeriodStart: periodStart,
-                    currentPeriodEnd:   periodEnd,
-                    trialEnd:           subscription.trial_end,
-                    resetCredits:       "always",
+                    currentPeriodEnd: periodEnd,
+                    trialEnd: subscription.trial_end,
+                    resetCredits: "always",
                 });
                 console.log(`✅ Invoice paid & subscription renewed for user: ${userId}`);
             }
@@ -241,13 +246,13 @@ async function upsertSubscription({
     resetCredits = "always",
 }) {
     const hasActiveAccess = ["active", "trialing"].includes(status);
-    const isTrialing      = status === "trialing";
+    const isTrialing = status === "trialing";
 
     // Resolve plan type from price ID — explicit match against every known
     // plan; falls through to null (not "self_study") if nothing matches,
     // so a bad/stale price ID is loud instead of silently miscategorized.
     let internalPlanType = null;
-    if (priceId === PRICE_IDS.self_study)  internalPlanType = "self_study";
+    if (priceId === PRICE_IDS.self_study) internalPlanType = "self_study";
     if (priceId === PRICE_IDS.student_pro) internalPlanType = "student_pro";
 
     if (!internalPlanType) {
@@ -303,10 +308,10 @@ async function upsertSubscription({
     const { error } = await supabase
         .from("Student")
         .update({
-            plan_type:              resolvedPlan,
-            stripe_customer_id:     stripeCustomerId,
+            plan_type: resolvedPlan,
+            stripe_customer_id: stripeCustomerId,
             stripe_subscription_id: subscriptionId,
-            subscription_status:    status,
+            subscription_status: status,
 
             isSubscribed: hasActiveAccess,
 
@@ -314,7 +319,7 @@ async function upsertSubscription({
             ...(trialEndDate && { trial_end: trialEndDate }),
 
             ...(subscriptionStart && { subscription_start: subscriptionStart }),
-            ...(subscriptionEnd   && { subscription_end:   subscriptionEnd   }),
+            ...(subscriptionEnd && { subscription_end: subscriptionEnd }),
 
             ...creditUpdate,
         })
@@ -334,10 +339,10 @@ async function revokeSubscription(subscriptionId) {
     const { error } = await supabase
         .from("Student")
         .update({
-            plan_type:           "free",
-            isSubscribed:        false,
+            plan_type: "free",
+            isSubscribed: false,
             subscription_status: "canceled",
-            AI_Credit:           0,
+            AI_Credit: 0,
         })
         .eq("stripe_subscription_id", subscriptionId);
 

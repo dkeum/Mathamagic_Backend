@@ -1,11 +1,22 @@
 const asyncHandler = require("express-async-handler");
-const STRIPE_API_SECRET_KEY = process.env.STRIPE_API_SECRET_KEY;
-const stripe = require("stripe")(STRIPE_API_SECRET_KEY);
-
-const supabase = require("../config/supabaseClient");
 
 // Check if the current environment is set to development
 const isDev = process.env.NODE_ENV === "DEVELOPMENT";
+
+const STRIPE_API_SECRET_KEY = isDev ? process.env.STRIPE_API_SECRET_KEY : process.env.STRIPE_OFFICIAL_API_SK_KEY;
+const stripe = require("stripe")(STRIPE_API_SECRET_KEY);
+
+
+// console.log(
+//     "Stripe mode:",
+//     process.env.STRIPE_SECRET_KEY?.startsWith("sk_live_")
+//         ? "LIVE"
+//         : "TEST"
+// );
+
+const supabase = require("../config/supabaseClient");
+
+
 
 const PRICE_IDS = {
     self_study: isDev
@@ -16,6 +27,18 @@ const PRICE_IDS = {
         : (process.env.STRIPE_PRICE_STUDENT_PRO || "price_1TqL1tRrpzjNnAA90LmbKOfZ").trim(),
 };
 
+// const PRICE_IDS = {
+//     self_study: isDev
+//         ? "price_1Td1FoRv5XPjIybS2GNrcDDN"
+//         : (process.env.STRIPE_PRICE_SELF_STUDY).trim(),
+//     student_pro: isDev
+//         ? "price_1Td43kRv5XPjIybSvLaoLLlg"
+//         : (process.env.STRIPE_PRICE_STUDENT_PRO).trim(),
+// };
+
+// console.log(isDev ? "Using TEST Stripe price IDs" : "Using OFFICIAL Stripe price IDs");
+// console.log(PRICE_IDS.self_study, "PRICE_IDS.self_study");
+// console.log(PRICE_IDS.student_pro, "PRICE_IDS.student_pro");
 // Newer Stripe API versions moved current_period_start/end off the
 // top-level Subscription object onto each subscription item, to support
 // items with independently timed billing cycles. Check both locations so
@@ -113,6 +136,8 @@ const createCheckoutSession = asyncHandler(async (req, res) => {
         cancel_url: `${origin}/pricing`,
     };
 
+    console.log(sessionParams, "sessionParams");
+
     if (existingCustomerId) {
         sessionParams.customer = existingCustomerId;
     } else {
@@ -120,11 +145,21 @@ const createCheckoutSession = asyncHandler(async (req, res) => {
     }
 
     if (!hadTrial) {
-        sessionParams.subscription_data = { trial_period_days: 7 };
+        sessionParams.subscription_data = { trial_period_days: 30 };
     }
 
     try {
         const session = await stripe.checkout.sessions.create(sessionParams);
+
+
+        console.log("Checkout session:", session.id);
+        console.log("Checkout mode:", session.livemode);
+        console.log("Stripe key mode:",
+            process.env.STRIPE_SECRET_KEY?.startsWith("sk_live_")
+                ? "LIVE"
+                : "TEST"
+        );
+
         return res.status(200).json({ id: session.id, url: session.url });
     } catch (stripeError) {
         console.error("Stripe checkout failed:", stripeError);
@@ -431,7 +466,7 @@ const getSubscriptionStatus = asyncHandler(async (req, res) => {
     if (!student?.stripe_subscription_id) {
         return res.status(200).json({ status: "no_subscription", active: false });
     }
-    console.log("the is the sub_id:", student.stripe_subscription_id.trim() , "ZZZZZZZZZZZZZZZZZZz")
+    console.log("the is the sub_id:", student.stripe_subscription_id.trim(), "ZZZZZZZZZZZZZZZZZZz")
     const subscription = await stripe.subscriptions.retrieve(student.stripe_subscription_id.trim());
     const { end: periodEnd } = getSubscriptionPeriod(subscription);
 

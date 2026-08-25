@@ -4,440 +4,160 @@ const dateFunctions = require("./helperFunctions/date");
 const { v4: uuidv4 } = require("uuid"); // import uuid
 const axios = require("axios");
 const jwt = require("jsonwebtoken");
+const { PARALLEL_THRESHOLD,
+  updateSectionSkillsSequential,
+  updateSectionSkillsParallel,
+  computeSectionStatus, } = require("./helperFunctions/KnowledgeTreePrompts");
+const { chargeCredits } = require("./aiController");
+
+const {
+  computeProgress,
+  computeGradeBreakdown,
+  computePersistence,
+  computeIndependence,
+  computeConsistency,
+  computeFocus,
+  computeErrorChecking,
+  computeHardSkills,
+  generateRecommendations,
+} = require("./helperFunctions/studentReportGenerate");
+
+const {
+  checkAndUpdateSubscription,
+  getDailyFreeUsage,
+  buildActivityStats,
+  buildCourseProgress
+} = require('./helperFunctions/StudentStatus'); // Adjust path as needed
 
 
 
 // @ GET
 // ROUTE: /:user_email/getprofile
-// @ GET
-// ROUTE: /:user_email/getprofile
+
+
 const getProgress = asyncHandler(async (req, res) => {
   const authHeader = req.headers.authorization;
   const token = authHeader ? authHeader.split(" ")[1] : req.cookies?.access_token;
-  if (!token)
-    return res.status(401).json({ error: "Missing or invalid token." });
+  if (!token) return res.status(401).json({ error: "Missing or invalid token." });
 
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser(token);
-  if (userError || !user)
-    return res.status(401).json({ error: "Unauthorized user." });
-
-  const email = user.email;
+  // 1. Authenticate & Fetch User
+  const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+  if (userError || !user) return res.status(401).json({ error: "Unauthorized user." });
 
   const { data: studentData, error: studentError } = await supabase
     .from("Student")
-    .select(
-      `
+    .select(`
       id, name, class, grade, time_commitment, profile_picture,
       AI_Credit, plan_type, isSubscribed, had_trial,
       trial_end, subscription_end, subscription_status, Class_ID,
       cached_overall_grade, cached_completion_pct,
       cached_total_minutes, last_cache_updated_at,
       last_free_video_at, last_free_step_by_step_at
-    `
-    )
-    .eq("email", email)
+    `)
+    .eq("email", user.email)
     .single();
 
-  if (studentError || !studentData) {
-    return res.status(404).json({ error: "Student not found." });
-  }
+  if (studentError || !studentData) return res.status(404).json({ error: "Student not found." });
 
-  const {
-    id: studentId,
-    name: studentName,
-    class: className,
-    time_commitment: timeCommitment,
-    profile_picture,
-    AI_Credit,
-    plan_type,
-    isSubscribed,
-    had_trial,
-    trial_end,
-    subscription_end,
-    subscription_status,
-    Class_ID: classIdFromDb,
-    cached_overall_grade,
-    cached_completion_pct,
-    cached_total_minutes,
-    last_cache_updated_at,
-    last_free_video_at,
-    last_free_step_by_step_at,
-  } = studentData;
+  const studentId = studentData.id;
 
-  let classId = classIdFromDb;
-
-  // ── Subscription fields ──────────────────────────────────────
-  const now = new Date();
-  const trialEndDate = trial_end ? new Date(trial_end) : null;
-  const subEndDate = subscription_end ? new Date(subscription_end) : null;
-  const is_on_trial = Boolean(had_trial && trialEndDate && trialEndDate > now);
-
-  let days_remaining = 0;
-  if (is_on_trial && trialEndDate) {
-    days_remaining = Math.max(
-      0,
-      Math.ceil((trialEndDate - now) / (1000 * 60 * 60 * 24))
-    );
-  } else if (isSubscribed && subEndDate) {
-    days_remaining = Math.max(
-      0,
-      Math.ceil((subEndDate - now) / (1000 * 60 * 60 * 24))
-    );
-  }
-
-  // ── Daily free-usage boundary (start of today, server local time) ──
-  const startOfToday = new Date();
-  startOfToday.setHours(0, 0, 0, 0);
-
-  const video_free_available_today =
-    !last_free_video_at || new Date(last_free_video_at) < startOfToday;
-
-  const step_by_step_free_available_today =
-    !last_free_step_by_step_at ||
-    new Date(last_free_step_by_step_at) < startOfToday;
-
-  // ── Run independent queries in parallel ──────────────────────
-  const [
-    { data: sessions },
-    { count: wrong_count },
-    { data: lastSection },
-    { count: homework_free_uploads_used_today },
-  ] = await Promise.all([
-    // Sessions for github activity + time tracking
-    supabase
-      .from("student_session")
-      .select("start_time, end_time, duration_minutes, timezone")
-      .eq("student_ID", studentId)
-      .order("start_time", { ascending: true }),
-
-    // Wrong unreviewed question count for dashboard card
-    supabase
-      .from("student_question_attempt")
-      .select("*", { count: "exact", head: true })
-      .eq("student_ID", studentId)
-      .eq("is_correct", false)
-      .eq("reviewed", false)
-      .is("corrected_at", null),
-
-    // Last attempted section for current module
-    supabase
-      .from("student_section_progress")
-      .select(
-        `
-        section_id,
-        mastery_score,
-        last_attempted_at,
-        Section:section_id (
-          name,
-          topic_ID,
-          Topic:topic_ID (
-            id,
-            name
-          )
-        )
-      `
-      )
-      .eq("student_ID", studentId)
-      .not("last_attempted_at", "is", null)
-      .order("last_attempted_at", { ascending: false })
-      .limit(1)
-      .single(),
-
-    // Free homework uploads used today
-    supabase
-      .from("homework_submission")
-      .select("*", { count: "exact", head: true })
-      .eq("student_ID", studentId)
-      .eq("is_free_submission", true)
-      .gte("submitted_at", startOfToday.toISOString()),
-  ]);
-
-  const homework_free_uploads_remaining_today = Math.max(
-    0,
-    3 - (homework_free_uploads_used_today ?? 0)
-  );
-
-  // ── Sessions ─────────────────────────────────────────────────
-  let github_activity = [];
-  let time_goal_met = 0;
-  let total_minutes_logged = 0;
-
-  const date200DaysAgo = new Date();
-  date200DaysAgo.setDate(date200DaysAgo.getDate() - 200);
-  github_activity.push({
-    date: date200DaysAgo.toISOString().slice(0, 10),
-    count: 0,
-    level: 0,
-  });
-
-  if (!sessions || sessions.length === 0) {
-    const today = new Date();
-    const twoMonthsAgo = new Date();
-    twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
-    twoMonthsAgo.setDate(twoMonthsAgo.getDate() - 20);
-
-    github_activity = [
-      { date: twoMonthsAgo.toISOString().slice(0, 10), count: 1, level: 1 },
-      { date: today.toISOString().slice(0, 10), count: 1, level: 1 },
-    ];
-
-    await supabase.from("student_session").insert({
-      student_ID: studentId,
-      start_time: today.toISOString(),
-      end_time: today.toISOString(),
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    });
-  } else {
-    const groupedByDate = {};
-    for (const session of sessions) {
-      const date = session.start_time.slice(0, 10);
-      if (!groupedByDate[date]) groupedByDate[date] = 0;
-      groupedByDate[date] += parseFloat(session.duration_minutes || 0);
-    }
-    for (const [date, totalMinutes] of Object.entries(groupedByDate)) {
-      let level = 1;
-      if (totalMinutes >= 120) level = 4;
-      else if (totalMinutes >= 60) level = 3;
-      else if (totalMinutes >= 30) level = 2;
-      github_activity.push({ date, count: 1, level });
-    }
-
-    const oneWeekAgo = new Date();
-    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-    const weeklyMinutes = sessions
-      .filter((s) => new Date(s.start_time) >= oneWeekAgo)
-      .reduce((sum, s) => sum + parseFloat(s.duration_minutes || 0), 0);
-    const weeklyGoalMinutes = (timeCommitment || 0) * 60;
-    time_goal_met =
-      weeklyGoalMinutes > 0
-        ? Math.min(100, Math.round((weeklyMinutes / weeklyGoalMinutes) * 100))
-        : 0;
-
-    total_minutes_logged = sessions.reduce(
-      (sum, s) => sum + parseFloat(s.duration_minutes || 0),
-      0
-    );
-  }
-
-  // ── Class fallback ───────────────────────────────────────────
+  // 2. Fallback for Class ID
+  let classId = studentData.Class_ID;
   if (!classId) {
-    const { error: updateError } = await supabase
-      .from("Student")
-      .update({ Class_ID: 3 })
-      .eq("id", studentId);
-
-    if (updateError) {
-      return res.status(500).json({ error: "Failed to assign default class." });
-    }
+    const { error: updateError } = await supabase.from("Student").update({ Class_ID: 3 }).eq("id", studentId);
+    if (updateError) return res.status(500).json({ error: "Failed to assign default class." });
     classId = 3;
   }
 
-  // ── Topics & Sections ────────────────────────────────────────
-  const { data: topics, error: topicError } = await supabase
-    .from("Topic")
-    .select("id, name")
-    .eq("class_ID", classId);
+  // 3. Delegate Subscription & Free Usage Check
+  const { is_on_trial, days_remaining, updatedStatus } = await checkAndUpdateSubscription(supabase, studentData);
+  const startOfTodayISO = new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
 
-  if (topicError || !topics || topics.length === 0) {
-    return res.status(404).json({ error: "No topics found for this class." });
+  // 4. Run Independent Queries in Parallel
+  let sessions, wrong_count, lastSection, homework_free_uploads_used_today;
+  try {
+    const results = await Promise.all([
+      supabase.from("student_session").select("start_time, end_time, duration_minutes, timezone").eq("student_ID", studentId).order("start_time", { ascending: true }),
+      supabase.from("student_question_attempt").select("*", { count: "exact", head: true }).eq("student_ID", studentId).eq("is_correct", false).eq("reviewed", false).is("corrected_at", null),
+      supabase.from("student_section_progress").select(`section_id, mastery_score, last_attempted_at, Section:section_id (name, topic_ID, Topic:topic_ID (id, name))`).eq("student_ID", studentId).not("last_attempted_at", "is", null).order("last_attempted_at", { ascending: false }).limit(1).single(),
+      supabase.from("homework_submission").select("*", { count: "exact", head: true }).eq("student_ID", studentId).eq("is_free_submission", true).gte("submitted_at", startOfTodayISO)
+    ]);
+    sessions = results[0].data;
+    wrong_count = results[1].count;
+    lastSection = results[2].data;
+    homework_free_uploads_used_today = results[3].count;
+  } catch (err) {
+    return res.status(500).json({ error: "Failed to fetch student dashboard data." });
   }
+
+  // 5. Build Activity Stats & Usage Boundaries
+  const dailyUsage = getDailyFreeUsage(studentData, homework_free_uploads_used_today);
+  const { github_activity, time_goal_met, total_minutes_logged } = await buildActivityStats(supabase, studentId, sessions, studentData.time_commitment);
+
+  // 6. Fetch Topics & Sections
+  const { data: topics, error: topicError } = await supabase.from("Topic").select("id, name").eq("class_ID", classId);
+  if (topicError || !topics || topics.length === 0) return res.status(404).json({ error: "No topics found for this class." });
 
   const topicIds = topics.map((t) => t.id);
-
-  const { data: sections, error: sectionError } = await supabase
-    .from("Section")
-    .select("id, name, topic_ID")
-    .in("topic_ID", topicIds);
-
-  if (sectionError || !sections || sections.length === 0) {
-    return res.status(404).json({ error: "No sections found for topics." });
-  }
+  const { data: sections, error: sectionError } = await supabase.from("Section").select("id, name, topic_ID").in("topic_ID", topicIds);
+  if (sectionError || !sections || sections.length === 0) return res.status(404).json({ error: "No sections found for topics." });
 
   const sectionIds = sections.map((s) => s.id);
 
-  // ── Section progress + question-attempt grades ────────────────
+  // 7. Fetch Section Progress in Parallel
   const [{ data: sectionProgress }, { data: questionAttempts }] = await Promise.all([
-    supabase
-      .from("student_section_progress")
-      .select("section_id, mastery_score, completed, last_attempted_at")
-      .eq("student_ID", studentId)
-      .in("section_id", sectionIds),
-
-    // NOTE: assumes student_question_attempt.section_id is populated directly.
-    // If attempts are only linked via question_id (no section_id on the row),
-    // this needs to join through `question` instead — flag if that's the case.
-    supabase
-      .from("student_question_attempt")
-      .select("section_id, is_correct")
-      .eq("student_ID", studentId)
-      .in("section_id", sectionIds),
+    supabase.from("student_section_progress").select("section_id, mastery_score, completed, last_attempted_at").eq("student_ID", studentId).in("section_id", sectionIds),
+    supabase.from("student_question_attempt").select("section_id, is_correct").eq("student_ID", studentId).in("section_id", sectionIds),
   ]);
 
-  const progressMap = {};
-  for (const p of sectionProgress || []) {
-    progressMap[p.section_id] = p;
-  }
+  const current_module = lastSection ? {
+    topic_name: lastSection.Section?.Topic?.name ?? null,
+    topic_id: lastSection.Section?.Topic?.id ?? null,
+    section_name: lastSection.Section?.name ?? null,
+    section_id: lastSection.section_id,
+    mastery_score: parseFloat(lastSection.mastery_score || 0),
+    last_attempted_at: lastSection.last_attempted_at,
+  } : null;
 
-  // Per-section grade built from actual question attempts: (# correct / # total) * 100
-  const sectionGradeMap = {}; // section_id -> { correct, total }
-  for (const qa of questionAttempts || []) {
-    if (!sectionGradeMap[qa.section_id]) {
-      sectionGradeMap[qa.section_id] = { correct: 0, total: 0 };
-    }
-    sectionGradeMap[qa.section_id].total += 1;
-    if (qa.is_correct) sectionGradeMap[qa.section_id].correct += 1;
-  }
+  // 8. Build Course Progress Array
+  const {
+    finalProgressArray,
+    hasActivityHistory,
+    total_sections,
+    attempted_sections,
+    attempted_mastery_sum,
+    completed_sections
+  } = buildCourseProgress(topics, sections, sectionProgress, questionAttempts, current_module);
 
-  // ── Current module ───────────────────────────────────────────
-  const current_module = lastSection
-    ? {
-      topic_name: lastSection.Section?.Topic?.name ?? null,
-      topic_id: lastSection.Section?.Topic?.id ?? null,
-      section_name: lastSection.Section?.name ?? null,
-      section_id: lastSection.section_id,
-      mastery_score: parseFloat(lastSection.mastery_score || 0),
-      last_attempted_at: lastSection.last_attempted_at,
-    }
-    : null;
-
-  // ── Build progressArray with topic mastery + section status ──
-  let total_sections = 0;
-  let attempted_sections = 0;      // sections with at least one graded question attempt
-  let attempted_mastery_sum = 0;   // sum of per-section (%correct) grades, only over attempted sections
-  let completed_sections = 0;      // sections marked completed
-  let isFirstSectionGlobal = true;
-
-  const progressArray = topics.map((topic) => {
-    const topicSections = sections.filter((sec) => sec.topic_ID === topic.id);
-    let topicMasterySum = 0;
-    let topicAttemptedCount = 0;
-
-    const mappedSections = topicSections.map((sec) => {
-      const p = progressMap[sec.id];
-      const isCompleted = p?.completed ?? false;
-
-      const grades = sectionGradeMap[sec.id];
-      const hasGrade = grades && grades.total > 0;
-      const sectionGrade = hasGrade ? (grades.correct / grades.total) * 100 : 0;
-
-      total_sections += 1;
-
-      if (hasGrade) {
-        attempted_sections += 1;
-        attempted_mastery_sum += sectionGrade;
-        topicAttemptedCount += 1;
-        topicMasterySum += sectionGrade;
-      }
-      if (isCompleted) {
-        completed_sections += 1;
-      }
-
-      let status = "todo";
-      if (isCompleted) {
-        status = "done";
-      } else if (current_module && sec.id === current_module.section_id) {
-        status = "active";
-      } else if (!current_module && isFirstSectionGlobal) {
-        status = "active";
-      }
-      isFirstSectionGlobal = false;
-
-      return {
-        section_name: sec.name,
-        section_id: sec.id,
-        progress: p ? (isCompleted ? 1 : sectionGrade / 100) : 0,
-        latest_grade: sectionGrade,
-        completed: isCompleted,
-        status,
-        last_attempted_at: p?.last_attempted_at ?? null,
-      };
-    });
-
-    // topic_mastery: average per-section question-attempt grade, only over attempted sections in this topic
-    const topic_mastery = topicAttemptedCount > 0 ? (topicMasterySum / topicAttemptedCount) : 0;
-
-    return {
-      topic_name: topic.name,
-      topic_mastery,
-      sections: mappedSections,
-    };
-  });
-
-  // ── Filter for new students ───────────────────────────────────
-  let finalProgressArray = progressArray;
-  let hasActivityHistory = true;
-
-  if (!current_module && progressArray.length > 0) {
-    hasActivityHistory = false;
-    const firstTopic = progressArray[0];
-    finalProgressArray = [
-      {
-        ...firstTopic,
-        sections: firstTopic.sections.slice(0, 4),
-      },
-    ];
-  }
-
-  // ── Cache check & compute ────────────────────────────────────
-  const cacheAgeMinutes = last_cache_updated_at
-    ? (Date.now() - new Date(last_cache_updated_at)) / 1000 / 60
-    : 999;
-
+  // 9. Cache Computation & Background Update
+  const cacheAgeMinutes = studentData.last_cache_updated_at ? (Date.now() - new Date(studentData.last_cache_updated_at)) / 1000 / 60 : 999;
   let completion_progress, current_grade, time_logged_pct;
 
-  if (cacheAgeMinutes < 5 && cached_overall_grade != null) {
-    current_grade = cached_overall_grade;
-    completion_progress = cached_completion_pct;
-    time_logged_pct =
-      cached_total_minutes > 0 && (timeCommitment || 0) > 0
-        ? Math.min(
-          100,
-          Math.round(
-            (cached_total_minutes / ((timeCommitment || 1) * 60)) * 100
-          )
-        )
-        : 0;
+  if (cacheAgeMinutes < 5 && studentData.cached_overall_grade != null) {
+    current_grade = studentData.cached_overall_grade;
+    completion_progress = studentData.cached_completion_pct;
+    time_logged_pct = (studentData.cached_total_minutes > 0 && (studentData.time_commitment || 0) > 0)
+      ? Math.min(100, Math.round((studentData.cached_total_minutes / ((studentData.time_commitment || 1) * 60)) * 100)) : 0;
   } else {
-    // completion_progress: % of ALL sections in the class marked completed
-    completion_progress = total_sections > 0
-      ? Math.round((completed_sections / total_sections) * 100)
-      : 0;
-
-    // current_grade: average of per-section (%correct) grades across sections actually attempted
-    current_grade = attempted_sections > 0
-      ? Math.round(attempted_mastery_sum / attempted_sections)
-      : 0;
-
-    time_logged_pct =
-      (timeCommitment || 0) > 0
-        ? Math.min(
-          100,
-          Math.round(
-            (total_minutes_logged / ((timeCommitment || 1) * 60)) * 100
-          )
-        )
-        : 0;
+    completion_progress = total_sections > 0 ? Math.round((completed_sections / total_sections) * 100) : 0;
+    current_grade = attempted_sections > 0 ? Math.round(attempted_mastery_sum / attempted_sections) : 0;
+    time_logged_pct = (studentData.time_commitment || 0) > 0
+      ? Math.min(100, Math.round((total_minutes_logged / ((studentData.time_commitment || 1) * 60)) * 100)) : 0;
 
     // Fire-and-forget cache update
-    supabase
-      .from("Student")
-      .update({
-        cached_overall_grade: current_grade,
-        cached_completion_pct: completion_progress,
-        cached_total_minutes: total_minutes_logged,
-        last_cache_updated_at: new Date().toISOString(),
-      })
-      .eq("id", studentId)
-      .then(({ error }) => {
-        if (error) console.error("Cache update failed:", error.message);
-      });
+    supabase.from("Student").update({
+      cached_overall_grade: current_grade,
+      cached_completion_pct: completion_progress,
+      cached_total_minutes: total_minutes_logged,
+      last_cache_updated_at: new Date().toISOString(),
+    }).eq("id", studentId).then(({ error }) => {
+      if (error) console.error("Cache update failed:", error.message);
+    });
   }
 
+  // 10. Return Dashboard Payload
   return res.status(200).json({
-    name: studentName ?? "",
+    name: studentData.name ?? "",
     github_activity,
     current_grade,
     completion_progress,
@@ -448,25 +168,22 @@ const getProgress = asyncHandler(async (req, res) => {
     hasActivityHistory,
     wrong_count: wrong_count ?? 0,
     timeCommitment: time_goal_met,
-    actual_time_commitment: timeCommitment,
-    profile_picture,
+    actual_time_commitment: studentData.time_commitment,
+    profile_picture: studentData.profile_picture,
     is_on_trial,
     days_remaining,
-    plan_type: plan_type ?? "free",
-    ai_credits: AI_Credit ?? 0,
-    subscription_status: subscription_status ?? "inactive",
-    class: className,
-    Class_ID: classIdFromDb,
+    plan_type: studentData.plan_type ?? "free",
+    ai_credits: studentData.AI_Credit ?? 0,
+    subscription_status: updatedStatus ?? "inactive",
+    class: studentData.class,
+    Class_ID: classId,
 
-    // daily free-usage tracking (video / homework / step-by-step)
-    last_free_video_at: last_free_video_at ?? null,
-    video_free_available_today,
-
+    last_free_video_at: studentData.last_free_video_at ?? null,
+    video_free_available_today: dailyUsage.video_free_available_today,
     homework_free_uploads_used_today: homework_free_uploads_used_today ?? 0,
-    homework_free_uploads_remaining_today,
-
-    last_free_step_by_step_at: last_free_step_by_step_at ?? null,
-    step_by_step_free_available_today,
+    homework_free_uploads_remaining_today: dailyUsage.homework_free_uploads_remaining_today,
+    last_free_step_by_step_at: studentData.last_free_step_by_step_at ?? null,
+    step_by_step_free_available_today: dailyUsage.step_by_step_free_available_today,
   });
 });
 // @ PUT
@@ -672,7 +389,257 @@ const setDataFromSurvey = asyncHandler(async (req, res) => {
   });
 });
 
+
+
+// @ GET
+// ROUTE: /generate-student-progress-report?months=3
+const generateStudentProgressReport = asyncHandler(async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader ? authHeader.split(" ")[1] : req.cookies?.access_token;
+  if (!token) return res.status(401).json({ error: "Missing or invalid token." });
+
+  const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+  if (userError || !user) return res.status(401).json({ error: "Unauthorized user." });
+
+  const { data: studentData, error: studentError } = await supabase
+    .from("Student")
+    .select("id, Class_ID, plan_type, AI_Credit, time_commitment")
+    .eq("email", user.email)
+    .single();
+  if (studentError || !studentData) return res.status(404).json({ error: "Student not found." });
+
+  const studentId = studentData.id;
+  const classId = studentData.Class_ID;
+
+  const periodMonths = parseInt(req.query.months, 10) || 3;
+  const periodEnd = new Date();
+  const periodStart = new Date();
+  periodStart.setMonth(periodStart.getMonth() - periodMonths);
+
+  const periodStartISO = periodStart.toISOString();
+  const periodEndISO = periodEnd.toISOString();
+
+  const { data: topics, error: topicError } = await supabase
+    .from("Topic")
+    .select("id")
+    .eq("class_ID", classId);
+  if (topicError || !topics || topics.length === 0) {
+    return res.status(404).json({ error: "No topics found for this class." });
+  }
+
+  const { data: sections, error: sectionError } = await supabase
+    .from("Section")
+    .select("id, name, topic_ID")
+    .in("topic_ID", topics.map((t) => t.id));
+  if (sectionError || !sections || sections.length === 0) {
+    return res.status(404).json({ error: "No sections found for topics." });
+  }
+  const sectionIds = sections.map((s) => s.id);
+
+  const [progress, gradeBreakdown, persistence, independence, consistency, focus, errorChecking, hardSkills] =
+    await Promise.all([
+      computeProgress(studentId, sectionIds, periodStartISO, periodEndISO, studentData.time_commitment),
+      computeGradeBreakdown(studentId, sections, periodStartISO, periodEndISO),
+      computePersistence(studentId, periodStartISO, periodEndISO),
+      computeIndependence(studentId, periodStartISO, periodEndISO),
+      computeConsistency(studentId, periodStartISO, periodEndISO),
+      computeFocus(studentId, periodStartISO, periodEndISO),
+      computeErrorChecking(studentId, periodStartISO, periodEndISO),
+      computeHardSkills(studentId, sectionIds),
+    ]);
+
+  const reportDataSoFar = {
+    progress,
+    grade_breakdown: gradeBreakdown,
+    soft_skills: {
+      persistence: persistence.score,
+      independence: independence.score,
+      consistency: consistency.score,
+      focus: focus.score,
+      error_checking: errorChecking.score,
+    },
+    hard_skills: hardSkills,
+  };
+
+  const { recommendations, errors_to_fix, tokensUsed, creditsUsed, skippedForCredits } =
+    await generateRecommendations(studentData, reportDataSoFar);
+
+  const creditsRemaining = creditsUsed > 0
+    ? (await chargeCredits(studentId, creditsUsed)) ?? studentData.AI_Credit
+    : studentData.AI_Credit;
+
+  const reportData = {
+    ...reportDataSoFar,
+    recommendations,
+    errors_to_fix,
+  };
+
+  const { data: savedReport, error: saveErr } = await supabase
+    .from("student_progress_report")
+    .upsert({
+      student_id: studentId,
+      period_months: periodMonths,
+      period_start: periodStart.toISOString().slice(0, 10),
+      period_end: periodEnd.toISOString().slice(0, 10),
+      report_data: reportData,
+      generated_at: new Date().toISOString(),
+    }, { onConflict: "student_id,period_start,period_end" })
+    .select()
+    .single();
+  if (saveErr) throw saveErr;
+
+  res.status(200).json({
+    success: true,
+    report: reportData,
+    tokensUsed,
+    creditsUsed,
+    creditsRemaining,
+    creditsExhausted: skippedForCredits,
+  });
+});
+
+
+
+// @ GET
+// ROUTE: /generate-student-knowledge-tree
+const generateStudentKnowledgeTree = asyncHandler(async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader ? authHeader.split(" ")[1] : req.cookies?.access_token;
+  if (!token) return res.status(401).json({ error: "Missing or invalid token." });
+
+  const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+  if (userError || !user) return res.status(401).json({ error: "Unauthorized user." });
+
+  const { data: studentData, error: studentError } = await supabase
+    .from("Student")
+    .select("id, Class_ID, plan_type, AI_Credit")
+    .eq("email", user.email)
+    .single();
+  if (studentError || !studentData) return res.status(404).json({ error: "Student not found." });
+
+  const studentId = studentData.id;
+  const classId = studentData.Class_ID;
+  const startingCredits = studentData.AI_Credit ?? 0;
+  const runInParallel = startingCredits > PARALLEL_THRESHOLD;
+
+  const { data: topics, error: topicError } = await supabase
+    .from("Topic")
+    .select("id, name, Order")
+    .eq("class_ID", classId)
+    .order("Order", { ascending: true });
+  if (topicError || !topics || topics.length === 0) {
+    return res.status(404).json({ error: "No topics found for this class." });
+  }
+
+  const topicIds = topics.map((t) => t.id);
+  const { data: sections, error: sectionError } = await supabase
+    .from("Section")
+    .select("id, name, topic_ID")
+    .in("topic_ID", topicIds)
+    .order("id", { ascending: true });
+  if (sectionError || !sections || sections.length === 0) {
+    return res.status(404).json({ error: "No sections found for topics." });
+  }
+
+  const { data: progressRows, error: progressError } = await supabase
+    .from("student_section_progress")
+    .select("*")
+    .eq("student_ID", studentId)
+    .in("section_id", sections.map((s) => s.id));
+  if (progressError) throw progressError;
+
+  const progressMap = {};
+  (progressRows || []).forEach((p) => { progressMap[p.section_id] = p; });
+
+  let firstIncompleteFound = false;
+  const sectionsWithStatus = sections.map((section) => {
+    const progressRow = progressMap[section.id];
+    const completed = !!progressRow?.completed;
+    const isFirstIncomplete = !completed && !firstIncompleteFound;
+    if (isFirstIncomplete) firstIncompleteFound = true;
+    return { section, progressRow, status: computeSectionStatus(progressRow, isFirstIncomplete) };
+  });
+
+  let sectionResultsBySection;
+  let totalTokensUsed = 0;
+  let totalCreditsUsed = 0;
+  let creditsRemaining = startingCredits;
+  let creditsExhausted = false;
+
+  if (runInParallel) {
+    const creditsAvailable = startingCredits > 0;
+    const results = await Promise.all(
+      sectionsWithStatus.map(({ section, progressRow }) =>
+        updateSectionSkillsParallel(studentData, section, progressRow, creditsAvailable)
+      )
+    );
+
+    totalTokensUsed = results.reduce((sum, r) => sum + r.tokensUsed, 0);
+    totalCreditsUsed = results.reduce((sum, r) => sum + r.creditsUsed, 0);
+    creditsExhausted = results.some((r) => r.skippedForCredits);
+    creditsRemaining = totalCreditsUsed > 0
+      ? await chargeCredits(studentId, totalCreditsUsed)
+      : startingCredits;
+
+    sectionResultsBySection = new Map(
+      sectionsWithStatus.map(({ section }, i) => [section.id, results[i]])
+    );
+  } else {
+    sectionResultsBySection = new Map();
+    for (const { section, progressRow } of sectionsWithStatus) {
+      const result = await updateSectionSkillsSequential(studentData, section, progressRow, creditsRemaining);
+      creditsRemaining = result.creditsRemaining;
+      totalTokensUsed += result.tokensUsed;
+      totalCreditsUsed += result.creditsUsed;
+      if (result.skippedForCredits) creditsExhausted = true;
+      sectionResultsBySection.set(section.id, result);
+    }
+  }
+
+  const treeTopics = topics.map((topic) => {
+    const topicSections = sections.filter((s) => s.topic_ID === topic.id);
+    return {
+      id: topic.id,
+      name: topic.name,
+      sections: topicSections.map((section) => {
+        const { status, progressRow } = sectionsWithStatus.find((x) => x.section.id === section.id);
+        const { obtained, missed } = sectionResultsBySection.get(section.id);
+        return {
+          id: section.id,
+          name: section.name,
+          masteryScore: progressRow?.mastery_score || 0,
+          status,
+          videoWatched: !!progressRow?.video_watched,
+          skillsObtained: obtained,
+          skillsMissed: missed,
+        };
+      }),
+    };
+  });
+
+  const treeData = { topics: treeTopics };
+
+  const { error: treeErr } = await supabase
+    .from("student_knowledge_tree")
+    .upsert({
+      student_id: studentId,
+      tree_data: treeData,
+      generated_at: new Date().toISOString(),
+    }, { onConflict: "student_id" });
+  if (treeErr) throw treeErr;
+
+  res.status(200).json({
+    success: true,
+    tree: treeData,
+    tokensUsed: totalTokensUsed,
+    creditsUsed: totalCreditsUsed,
+    creditsRemaining,
+    creditsExhausted,
+  });
+});
 module.exports = {
+  generateStudentProgressReport,
+  generateStudentKnowledgeTree,
   setDataFromSurvey,
   getProgress,
   saveSession,

@@ -10,8 +10,6 @@ const getQuestions = asyncHandler(async (req, res) => {
   const authHeader = req.headers.authorization;
   const token = authHeader ? authHeader.split(" ")[1] : req.cookies?.access_token;
 
-  console.log(topic, section)
-
   if (!token) {
     return res.status(401).json({ error: "Missing or invalid token." });
   }
@@ -21,7 +19,6 @@ const getQuestions = asyncHandler(async (req, res) => {
     return res.status(401).json({ error: "Unauthorized user." });
   }
 
-  // Get topic ID scoped to class
   const { data: topicData, error: topicError } = await supabase
     .from("Topic")
     .select("id")
@@ -33,7 +30,6 @@ const getQuestions = asyncHandler(async (req, res) => {
     return res.status(404).json({ error: "Topic not found." });
   }
 
-  // Get section ID scoped to topic
   const { data: sectionData, error: sectionError } = await supabase
     .from("Section")
     .select("id")
@@ -45,10 +41,10 @@ const getQuestions = asyncHandler(async (req, res) => {
     return res.status(404).json({ error: "Section not found." });
   }
 
-  // Fetch ALL questions for the section (removed .limit(10))
+  // ✅ select() now already returns answer, options, question_type, checked, latex_checked
   const { data: allQuestions, error: questionsError } = await supabase
     .from("question")
-    .select("*")
+    .select("id, question, hint, formula, image_url, difficulty, question_type, options, answer, checked, latex_checked")
     .eq("section_id", sectionData.id);
 
   if (questionsError) {
@@ -60,30 +56,15 @@ const getQuestions = asyncHandler(async (req, res) => {
   }
 
   // --- RANDOMIZATION LOGIC ---
-  // Shuffle the array using a quick sort method and slice 10 items
   const questions = allQuestions
     .sort(() => 0.5 - Math.random())
     .slice(0, 10);
 
-  const questionIds = questions.map((q) => q.id);
+  // ❌ No more separate "answer" table fetch/merge needed — answer + options
+  // already live on each question row.
 
-  // Fetch answers using real ID array
-  const { data: answers, error: answersError } = await supabase
-    .from("answer")
-    .select("*")
-    .in("question_ID", questionIds);
-
-  if (answersError) {
-    return res.status(500).json({ error: "Error fetching answers." });
-  }
-
-  // Merge answers into their parent questions
-  const merged = questions.map((q) => ({
-    ...q,
-    answers: (answers || []).filter((a) => a.question_ID === q.id),
-  }));
-
-  return res.status(200).json({ questions: merged });
+  console.log(questions)
+  return res.status(200).json({ questions });
 });
 
 // @ POST
@@ -426,41 +407,43 @@ const getMistakes = asyncHandler(async (req, res) => {
   const { data: wrongAttempts, error: attemptsError } = await supabase
     .from("student_question_attempt")
     .select(`
+    id,
+    question_id,
+    section_id,
+    answer_given,
+    attempted_at,
+    corrected_at,
+    time_spent_seconds,
+    used_ai_video,
+    used_ai_chat,
+    reviewed,
+    question (
       id,
-      question_id,
-      section_id,
-      answer_given,
-      attempted_at,
-      corrected_at,
-      time_spent_seconds,
-      used_ai_video,
-      used_ai_chat,
-      reviewed,
-      question (
+      question,
+      hint,
+      formula,
+      image_url,
+      difficulty,
+      topic_id,
+      question_type,
+      options,
+      answer
+    ),
+    Section (
+      id,
+      name,
+      difficulty,
+      topic_ID,
+      Topic (
         id,
-        question,
-        hint,
-        formula,
-        image_url,
-        difficulty,
-        topic_id,
-        answer ( id, answer )
-      ),
-      Section (
-        id,
-        name,
-        difficulty,
-        topic_ID,
-        Topic (
-          id,
-          name
-        )
+        name
       )
-    `)
+    )
+  `)
     .eq("student_ID", student.id)
     .eq("is_correct", false)
     .eq("reviewed", false)
-    .is("corrected_at", null)  // ✅ excludes corrected mistakes
+    .is("corrected_at", null)
     .order("attempted_at", { ascending: false });
 
   if (attemptsError) {
@@ -516,7 +499,9 @@ const getMistakes = asyncHandler(async (req, res) => {
       formula: attempt.question?.formula ?? null,
       image_url: attempt.question?.image_url ?? null,
       difficulty: attempt.question?.difficulty ?? null,
-      correct_answers: (attempt.question?.answer ?? []).map((a) => a.answer),
+      question_type: attempt.question?.question_type ?? null,
+      options: attempt.question?.options ?? null,
+      correct_answer: attempt.question?.answer ?? null,
       answer_given: attempt.answer_given,
       attempted_at: attempt.attempted_at,
       time_spent_seconds: attempt.time_spent_seconds,

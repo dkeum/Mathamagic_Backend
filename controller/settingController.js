@@ -7,6 +7,8 @@ const jwt = require("jsonwebtoken");
 const STRIPE_API_SECRET_KEY = process.env.STRIPE_API_SECRET_KEY;
 const stripe = require("stripe")(STRIPE_API_SECRET_KEY);
 
+const AIController = require("./AIController")
+
 
 
 // @ POST
@@ -213,9 +215,11 @@ const deleteAccount = asyncHandler(async (req, res) => {
     }
   }
 
-  // 3. Delete related Student Class Progress rows
+  // 3. Delete related student progress rows
+  // FIXED — table is `student_section_progress` per schema, not "Student Class Progress"
+  // (that table doesn't exist and this delete was silently failing every account deletion).
   const { error: progressError } = await supabase
-    .from("Student Class Progress")
+    .from("student_section_progress")
     .delete()
     .eq("student_ID", student_id);
 
@@ -267,6 +271,7 @@ const getSettingProfile = asyncHandler(async (req, res) => {
   const { data: student, error: studentError } = await supabase
     .from("Student")
     .select(`
+      id,
       plan_type, 
       subscription_status,
       "AI_Credit",
@@ -277,7 +282,7 @@ const getSettingProfile = asyncHandler(async (req, res) => {
         status
       )
     `)
-    .eq("id", user.id)
+    .eq("email", user.email) // Matched by email for consistency with requireStudent
     .single();
 
   if (studentError || !student) {
@@ -285,13 +290,91 @@ const getSettingProfile = asyncHandler(async (req, res) => {
     return res.status(404).json({ error: "Student record not found." });
   }
 
-  // Return the Stripe account tier, status, AI credits, and weekly progress email settings
+  // FIXED — table is `ai_usage_daily` and the credit column is `credits_used`,
+  // not `ai_usage`/`credits`. This is what record_ai_usage() actually writes to.
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: aiUsageRows, error: aiUsageError } = await supabase
+    .from("ai_usage_daily")
+    .select("usage_date, category, credits_used")
+    .eq("student_id", student.id)
+    .eq("usage_date", today);
+
+  if (aiUsageError) {
+    console.error("Failed to fetch AI usage:", aiUsageError.message);
+  }
+
+  // Map credits_used -> credits so the frontend's existing shape
+  // (ai_usage: [{ category, credits }]) doesn't need to change.
+  const ai_usage = (aiUsageRows || []).map((row) => ({
+    category: row.category,
+    credits: row.credits_used,
+  }));
+
+  // Return the Stripe account tier, status, AI credits, AI usage, and guardian notification settings
   return res.status(200).json({
     tier: student.plan_type || "free",
     status: student.subscription_status || "inactive",
-    credits: student.AI_Credit || 0, // Using your schema's AI_Credit column
+    credits: student.AI_Credit || 0,
+    ai_usage,
     guardian_notifications: student.guardian_link || []
   });
+});
+
+
+// @ POST
+// ROUTE: /student/upload-avatar
+const uploadAvatar = asyncHandler(async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader ? authHeader.split(" ")[1] : req.cookies?.access_token;
+
+  if (!token) {
+    return res.status(401).json({ error: "Missing or invalid token." });
+  }
+
+  const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+  if (userError || !user) {
+    return res.status(401).json({ error: "Unauthorized user." });
+  }
+
+  if (!req.file) {
+    return res.status(400).json({ error: "No image provided." });
+  }
+
+  const fileExt = (req.file.mimetype.split("/")[1] || "png").toLowerCase();
+  const filePath = `${user.id}/${Date.now()}.${fileExt}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from("avatar")
+    .upload(filePath, req.file.buffer, {
+      contentType: req.file.mimetype,
+      upsert: true,
+    });
+
+  if (uploadError) {
+    console.error("Avatar upload failed:", uploadError.message);
+    return res.status(500).json({ error: "Failed to upload avatar." });
+  }
+
+  const { data: publicUrlData } = supabase.storage
+    .from("avatar")
+    .getPublicUrl(filePath);
+
+  const profile_picture = publicUrlData.publicUrl;
+
+  const { error: updateError } = await supabase
+    .from("Student")
+    .update({
+      profile_picture,
+      avatar_updated_at: new Date().toISOString(),
+    })
+    .eq("id", user.id);
+
+  if (updateError) {
+    console.error("Failed to save avatar URL:", updateError.message);
+    return res.status(500).json({ error: "Failed to save avatar." });
+  }
+
+  return res.status(200).json({ profile_picture });
 });
 
 
@@ -301,5 +384,6 @@ module.exports = {
   setName,
   updateProfileInformation,
   deleteAccount,
-  getSettingProfile
+  getSettingProfile,
+  uploadAvatar,
 };

@@ -34,6 +34,25 @@ async function requireStudent(req) {
   return { student };
 }
 
+
+async function getQuestionsByIds(questionIds) {
+  const { data, error } = await supabase
+    .from("question")
+    .select("id, question, hint, formula, answer(answer)")
+    .in("id", questionIds);
+
+  if (error) {
+    console.error("getQuestionsByIds failed:", error);
+    return [];
+  }
+
+  // Normalize so callers can keep using q.answers[0].answer
+  return (data || []).map((q) => ({
+    ...q,
+    answers: q.answer || [], // Supabase names the nested relation after the table
+  }));
+}
+
 // Block before making the (expensive) Gemini call at all if the student is already out.
 // Actual cost isn't known until the response comes back, so the real charge happens after —
 // this pre-check just stops calls from a student sitting at 0 or negative.
@@ -53,6 +72,26 @@ async function chargeCredits(studentId, credits) {
   return data; // remaining balance
 }
 
+// NEW — records today's cumulative credit usage for a student under a
+// given category (all four AI endpoints below use "ai_chat"). Upserts
+// via the record_ai_usage RPC so a day's usage is one row that grows,
+// not a new row per call.
+async function recordAiUsage(studentId, credits, category = "ai_chat") {
+  const usageDate = new Date().toISOString().slice(0, 10); // UTC YYYY-MM-DD
+
+  const { error } = await supabase.rpc("record_ai_usage", {
+    p_student_id: studentId,
+    p_usage_date: usageDate,
+    p_category: category,
+    p_credits: credits,
+  });
+
+  if (error) {
+    console.error("Failed to record AI usage:", error);
+  }
+}
+
+
 // POST /ai/verify-answers
 const verifyAnswers = asyncHandler(async (req, res) => {
   const { student, error } = await requireStudent(req);
@@ -69,12 +108,29 @@ const verifyAnswers = asyncHandler(async (req, res) => {
     return res.status(400).json({ message: "attempts must be a non-empty array." });
   }
 
+  // Pull question text from the DB — never trust the client for this
+  const questionIds = attempts.map(a => a.question_id);
+  const questions = await getQuestionsByIds(questionIds);
+  const questionMap = new Map(questions.map(q => [q.id, q]));
+
+  const gradingData = attempts.map(a => {
+    const q = questionMap.get(a.question_id);
+    return {
+      question_id: a.question_id,
+      question: q?.question ?? "",
+      answer_given: a.answer_given,
+    };
+  });
+
+  console.log(gradingData);
+
   try {
     const prompt = `You are an evaluation engine for a math platform.
-Review each item and determine if "answer_given" is mathematically correct.
+There is no answer key provided — judge each item purely using your own mathematical reasoning.
+For each item, determine whether "answer_given" correctly answers "question" (accept mathematically equivalent forms, e.g. simplified fractions, different but equal expressions).
 
 Data:
-${JSON.stringify(attempts, null, 2)}
+${JSON.stringify(gradingData, null, 2)}
 
 Return a JSON array of objects with "question_id" and "is_correct" (boolean).`;
 
@@ -84,9 +140,18 @@ Return a JSON array of objects with "question_id" and "is_correct" (boolean).`;
       config: { responseMimeType: "application/json" },
     });
 
+    // console.log(response)
+
     const results = JSON.parse(response.text);
-    const creditsUsed = calculateCreditsUsed(model, response.usageMetadata);
+
+    console.log("AI grading results:", results);
+
+    console.log(response.usageMetadata)
+    const creditsUsed = await calculateCreditsUsed(model, response.usageMetadata);
+
+    console.log(creditsUsed)
     const remaining = await chargeCredits(student.id, creditsUsed);
+    await recordAiUsage(student.id, creditsUsed); // NEW
 
     res.set("X-AI-Credits-Remaining", remaining ?? student.AI_Credit);
     return res.json({ results });
@@ -160,6 +225,7 @@ Return: {"is_correct": true or false, "reason": "<short explanation if incorrect
     const parsed = JSON.parse(response.text);
     const creditsUsed = calculateCreditsUsed(model, response.usageMetadata);
     const remaining = await chargeCredits(student.id, creditsUsed);
+    await recordAiUsage(student.id, creditsUsed); // NEW
 
     res.set("X-AI-Credits-Remaining", remaining ?? student.AI_Credit);
     return res.json({ is_correct: !!parsed.is_correct, reason: parsed.reason ?? null });
@@ -169,7 +235,7 @@ Return: {"is_correct": true or false, "reason": "<short explanation if incorrect
   }
 });
 
-// POST /ai/chat
+
 // POST /ai/chat
 const chat = asyncHandler(async (req, res) => {
   const { student, error } = await requireStudent(req);
@@ -189,13 +255,15 @@ const chat = asyncHandler(async (req, res) => {
   try {
     const systemInstruction = `You are a helpful, encouraging math tutor for high school students.
 
-  [RULES]
+   [RULES]
   1. Be concise, clear, and highly encouraging.
   2. Guide step-by-step without giving away the direct answer.
   3. Bold each step label like "**Step 1:**", "**Step 2:**", etc.
   4. Put a blank line (a full empty line, i.e. two newlines) between each step so they render as separate paragraphs in Markdown.
-  5. Write ALL math expressions using LaTeX delimiters: $...$ for inline math (e.g. $\\frac{1}{2}$, $a^3$, $(-a^3)^2$) and $$...$$ for standalone equations on their own line. Never write exponents, fractions, or other math notation as plain text (e.g. a^3, 1/2) outside of $ delimiters.
-  6. If images are attached, analyze them as part of the student's work.
+  5. Write every math expression using LaTeX delimiters, and write each one only ONCE — never repeat the same expression twice in a row or restate it in plain text right after the LaTeX version.
+  6. When an expression is the main focus of a step (the thing being explained or transformed), put it on its own separate line using display math: $$...$$. Use inline math ($...$) only for short expressions mentioned in passing within a sentence.
+  7. If images are attached, analyze them as part of the student's work.
+
 
   [CONTEXT]
   The student is working on "${topic}" — specifically "${section}".
@@ -256,6 +324,7 @@ const chat = asyncHandler(async (req, res) => {
 
     console.log("credit used", creditsUsed);
     const remaining = await chargeCredits(student.id, creditsUsed);
+    await recordAiUsage(student.id, creditsUsed); // NEW
 
     res.set("X-AI-Credits-Remaining", remaining ?? student.AI_Credit);
     return res.json({ text: response.text || "I couldn't process that." });
@@ -304,6 +373,7 @@ const readQuestion = asyncHandler(async (req, res) => {
 
     const creditsUsed = calculateCreditsUsed(model, response.usageMetadata);
     const remaining = await chargeCredits(student.id, creditsUsed);
+    await recordAiUsage(student.id, creditsUsed); // NEW
 
     res.set("X-AI-Credits-Remaining", remaining ?? student.AI_Credit);
     return res.json({ question: (response.text || "").trim() });
@@ -313,4 +383,14 @@ const readQuestion = asyncHandler(async (req, res) => {
   }
 });
 
-module.exports = { verifyAnswers, verifyAnswer, chat, readQuestion };
+module.exports = {
+  verifyAnswers,
+  verifyAnswer,
+  chat,
+  readQuestion,
+  chargeCredits,
+  hasCredits,
+  requireStudent,
+  resolveModel,
+  recordAiUsage, // NEW — exported so /student/usage-today (or wherever) can reuse the same category constant if needed
+};

@@ -5,6 +5,7 @@ const multer = require("multer");
 const upload = multer(); // memory storage (keeps file in req.file.buffer)
 
 const settingController = require("../controller/settingController");
+
 const applyCustomCors = require("./customCorsHelper/helperFunctions/customCors");
 
 // Only apply CORS headers and OPTIONS handlers in non-development environments
@@ -37,11 +38,15 @@ applyCustomCors(router)
 // ── Settings routes ─────────────────────────────────────────────
 router.post("/update-userprofile", settingController.updateUser);
 
-router.put("/user/setname",  settingController.setName);
+router.put("/user/setname", settingController.setName);
+
+
 
 
 router.put("/update-profile-info", upload.single("profile_picture"), settingController.updateProfileInformation);
 router.delete("/delete-account", settingController.deleteAccount);
 router.get("/setting-info", settingController.getSettingProfile);
+// router.get("/usage-today", AIController.recordAiUsage);
+router.put("/upload-avatar", upload.single("profile_picture"), settingController.uploadAvatar);
 
 module.exports = router;

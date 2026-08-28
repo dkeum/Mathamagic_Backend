@@ -143,7 +143,7 @@ const signUp = asyncHandler(async (req, res) => {
     const FRONTEND_BASE_URL =
       process.env.NODE_ENV === "DEVELOPMENT"
         ? "http://localhost:5173"
-        : process.env.FRONTEND_URL;
+        : "https://mathmagick.com";
 
     const verifyUrl = `${FRONTEND_BASE_URL}/surveypersonaldetail?token=${verifyToken}`;
 

@@ -119,7 +119,7 @@ const signUp = asyncHandler(async (req, res) => {
           <tr>
             <td style="background-color:#f2f4f6; padding: 32px 24px; text-align:center; border-top: 1px solid #e0e3e5;">
               <div style="font-family: 'Space Grotesk', Arial, sans-serif; font-size: 16px; font-weight: 700; color:#0035b9; opacity:0.8; margin-bottom: 16px;">
-                🧮 Mathamagic
+                🧮 Mathmagick
               </div>
               <div style="margin-bottom: 12px;">
                 <a href="#" style="font-size: 13px; color:#444654; text-decoration:none; margin: 0 12px;">Privacy</a>
@@ -127,7 +127,7 @@ const signUp = asyncHandler(async (req, res) => {
                 <a href="#" style="font-size: 13px; color:#444654; text-decoration:none; margin: 0 12px;">Unsubscribe</a>
               </div>
               <p style="font-size: 10px; color:#747686; text-transform:uppercase; letter-spacing: 0.2em; font-weight: 700; margin:0;">
-                © 2026 Mathamagic
+                © 2026 Mathmagick
               </p>
             </td>
           </tr>
@@ -149,9 +149,9 @@ const signUp = asyncHandler(async (req, res) => {
 
 
     await transporter.sendMail({
-      from: `"Mathamagic" <${process.env.NOREPLY_GMAIL}>`,
+      from: `"Mathmagick" <${process.env.NOREPLY_GMAIL}>`,
       to: email,
-      subject: "Confirm your Mathamagic account",
+      subject: "Confirm your Mathmagick account",
       html: buildVerifyEmailHtml(verifyUrl),
     });
 

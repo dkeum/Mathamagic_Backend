@@ -35,7 +35,7 @@ router.get("/questions/:topic/:section", questionController.getQuestions);
 router.post("/questions/save-marks", questionController.saveQuestionMarks);
 router.get("/questions/mistakes", questionController.getMistakes)
 router.post("/questions/fixed-mistakes", questionController.fixMistakes)
-
+router.post("/questions/step-by-step/chat", questionController.stepByStepSession_recorder)
 
 
 module.exports = router;

@@ -19,6 +19,7 @@ const {
   computeFocus,
   computeErrorChecking,
   computeHardSkills,
+  computeStepByStepUsage,
   generateRecommendations,
 } = require("./helperFunctions/studentReportGenerate");
 
@@ -436,7 +437,7 @@ const generateStudentProgressReport = asyncHandler(async (req, res) => {
   }
   const sectionIds = sections.map((s) => s.id);
 
-  const [progress, gradeBreakdown, persistence, independence, consistency, focus, errorChecking, hardSkills] =
+  const [progress, gradeBreakdown, persistence, independence, consistency, focus, errorChecking, hardSkills, stepByStep] =
     await Promise.all([
       computeProgress(studentId, sectionIds, periodStartISO, periodEndISO, studentData.time_commitment),
       computeGradeBreakdown(studentId, sections, periodStartISO, periodEndISO),
@@ -446,6 +447,7 @@ const generateStudentProgressReport = asyncHandler(async (req, res) => {
       computeFocus(studentId, periodStartISO, periodEndISO),
       computeErrorChecking(studentId, periodStartISO, periodEndISO),
       computeHardSkills(studentId, sectionIds),
+      computeStepByStepUsage(studentId, periodStartISO, periodEndISO, 10),
     ]);
 
   const reportDataSoFar = {
@@ -459,6 +461,7 @@ const generateStudentProgressReport = asyncHandler(async (req, res) => {
       error_checking: errorChecking.score,
     },
     hard_skills: hardSkills,
+    step_by_step: stepByStep.hasData ? stepByStep.sessions : null,
   };
 
   const { recommendations, errors_to_fix, tokensUsed, creditsUsed, skippedForCredits } =
@@ -500,6 +503,8 @@ const generateStudentProgressReport = asyncHandler(async (req, res) => {
 
 
 
+// @ GET
+// ROUTE: /generate-student-knowledge-tree
 // @ GET
 // ROUTE: /generate-student-knowledge-tree
 const generateStudentKnowledgeTree = asyncHandler(async (req, res) => {
@@ -551,8 +556,25 @@ const generateStudentKnowledgeTree = asyncHandler(async (req, res) => {
   const progressMap = {};
   (progressRows || []).forEach((p) => { progressMap[p.section_id] = p; });
 
+  // Sort sections to match curriculum order: topic order first (topics is
+  // already ordered by `Order`), then section order within each topic.
+  // This is what firstIncomplete must walk — NOT the raw `sections` array,
+  // which is only sorted by id globally and can put a later topic's section
+  // ahead of an earlier topic's section if ids don't line up with curriculum
+  // order. (If sections within a topic can also be created out of order,
+  // swap `a.id - b.id` below for an explicit `Order` column on Section.)
+  const sectionsByTopic = new Map();
+  sections.forEach((s) => {
+    if (!sectionsByTopic.has(s.topic_ID)) sectionsByTopic.set(s.topic_ID, []);
+    sectionsByTopic.get(s.topic_ID).push(s);
+  });
+
+  const orderedSections = topics.flatMap((topic) =>
+    (sectionsByTopic.get(topic.id) || []).sort((a, b) => a.id - b.id)
+  );
+
   let firstIncompleteFound = false;
-  const sectionsWithStatus = sections.map((section) => {
+  const sectionsWithStatus = orderedSections.map((section) => {
     const progressRow = progressMap[section.id];
     const completed = !!progressRow?.completed;
     const isFirstIncomplete = !completed && !firstIncompleteFound;
@@ -637,6 +659,8 @@ const generateStudentKnowledgeTree = asyncHandler(async (req, res) => {
     creditsExhausted,
   });
 });
+
+
 module.exports = {
   generateStudentProgressReport,
   generateStudentKnowledgeTree,

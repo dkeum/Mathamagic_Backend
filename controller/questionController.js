@@ -60,11 +60,9 @@ const getQuestions = asyncHandler(async (req, res) => {
     .sort(() => 0.5 - Math.random())
     .slice(0, 10);
 
-  // ❌ No more separate "answer" table fetch/merge needed — answer + options
-  // already live on each question row.
 
-  console.log(questions)
-  return res.status(200).json({ questions });
+  console.log(topicData.id, sectionData.id, questions.length)
+  return res.status(200).json({ questions, topic_id: topicData.id, section_id: sectionData.id });
 });
 
 // @ POST
@@ -780,6 +778,34 @@ const fixMistakes = asyncHandler(async (req, res) => {
   });
 });
 
+const stepByStepSession_recorder = asyncHandler(async (req, res) => {
+  const { questionId, chatLog } = req.body;
+  const studentId = req.user.id; // set by your existing auth middleware
+
+  if (!Array.isArray(chatLog) || chatLog.length === 0) {
+    return res.status(400).json({ error: "chatLog is required" });
+  }
+
+  const { data, error } = await supabase
+    .from("step_by_step_session")
+    .insert({
+      student_id: studentId,
+      question_id: questionId ?? null,
+      chat_log: chatLog,
+      status: "completed",
+      completed_at: new Date().toISOString(),
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Failed to save step_by_step_session:", error);
+    return res.status(500).json({ error: "Failed to save chat" });
+  }
+
+  return res.json({ session: data });
+});
+
 
 
 
@@ -788,4 +814,5 @@ module.exports = {
   saveQuestionMarks,
   getMistakes,
   fixMistakes,
+  stepByStepSession_recorder,
 };

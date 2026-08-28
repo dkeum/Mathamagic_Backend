@@ -31,10 +31,10 @@ async function calculateCreditsUsed(model, usage) {
   const outputRate = (isLongContext && pricing.outputLong ? pricing.outputLong : pricing.output) * rate;
 
   const costCad = usage.promptTokenCount * inputRate + usage.candidatesTokenCount * outputRate;
-  
+
   // The cost in CAD is divided by the new CREDIT_VALUE_CAD (0.00125) 
   // to determine how many credits to deduct.
-  return Math.ceil(costCad / CREDIT_VALUE_CAD);
+  return Math.round(Math.ceil(costCad / CREDIT_VALUE_CAD) * 2); // Multiply by 2 to account for both input and output costs
 }
 
 module.exports = { CREDIT_VALUE_CAD, PLAN_CREDIT_ALLOWANCE, calculateCreditsUsed, getUsdToCadRate };

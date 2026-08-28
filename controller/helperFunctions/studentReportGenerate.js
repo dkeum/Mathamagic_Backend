@@ -18,6 +18,64 @@ const FOCUS_MIN_RATIO = 0.4;
 const FOCUS_MAX_RATIO = 2.5;
 const MAX_HARD_SKILLS = 10;
 
+
+
+// ---------------------------------------------------------------------------
+// Step-by-step: last N sessions in period, with per-step feedback already
+// generated live (ai_feedback on step_by_step_attempt) — no new AI call here,
+// just packaging the evidence of where reasoning broke down.
+// ---------------------------------------------------------------------------
+async function computeStepByStepUsage(studentId, periodStart, periodEnd, limit = 10) {
+    const { data: sessions, error: sessionError } = await supabase
+        .from("step_by_step_session")
+        .select("id, question_id, status, created_at, completed_at")
+        .eq("student_id", studentId)
+        .gte("created_at", periodStart)
+        .lte("created_at", periodEnd)
+        .order("created_at", { ascending: false })
+        .limit(limit);
+    if (sessionError) throw sessionError;
+
+    if (!sessions || sessions.length === 0) {
+        return { hasData: false, sessions: [] };
+    }
+
+    const sessionIds = sessions.map((s) => s.id);
+    const { data: attempts, error: attemptError } = await supabase
+        .from("step_by_step_attempt")
+        .select("session_id, step_number, is_correct, ai_feedback, tool_used")
+        .in("session_id", sessionIds)
+        .order("step_number", { ascending: true });
+    if (attemptError) throw attemptError;
+
+    const attemptsBySession = new Map();
+    (attempts || []).forEach((a) => {
+        if (!attemptsBySession.has(a.session_id)) attemptsBySession.set(a.session_id, []);
+        attemptsBySession.get(a.session_id).push(a);
+    });
+
+    const sessionsWithAttempts = sessions.map((session) => {
+        const sessionAttempts = attemptsBySession.get(session.id) || [];
+        const incorrectSteps = sessionAttempts.filter((a) => a.is_correct === false);
+
+        return {
+            sessionId: session.id,
+            questionId: session.question_id,
+            status: session.status,
+            createdAt: session.created_at,
+            totalSteps: sessionAttempts.length,
+            incorrectStepCount: incorrectSteps.length,
+            incorrectStepFeedback: incorrectSteps.map((a) => ({
+                stepNumber: a.step_number,
+                toolUsed: a.tool_used,
+                feedback: a.ai_feedback,
+            })),
+        };
+    });
+
+    return { hasData: true, sessions: sessionsWithAttempts };
+}
+
 // ---------------------------------------------------------------------------
 // Progress: completion (cumulative snapshot) + mastery (period-scoped)
 // ---------------------------------------------------------------------------
@@ -286,6 +344,8 @@ async function generateRecommendations(student, reportData) {
     }
 
     const model = resolveModel(student.plan_type);
+    const hasStepByStep = !!reportData.step_by_step;
+
     const prompt = `You are summarizing a math student's progress report. Based on this data, write concise, encouraging, actionable output.
 
 Data:
@@ -294,6 +354,7 @@ ${JSON.stringify(reportData, null, 2)}
 Rules:
 - "recommendations": 3-5 short, specific, actionable suggestions (max 15 words each).
 - "errors_to_fix": up to 5 concrete recurring mistake patterns drawn from "needs_attention" sections and "needs_work" skills (max 12 words each).
+${hasStepByStep ? `- "step_by_step" contains the student's last ${reportData.step_by_step.length} step-by-step sessions, each with "incorrectStepFeedback" — the actual feedback given at the time a reasoning step went wrong. Read these to understand HOW the student's reasoning broke down (not just that a section is weak), and fold at least one specific, personalized recommendation addressing that reasoning pattern into "recommendations" (e.g. naming the kind of step where they went wrong and what to check next time). Reference the pattern, not internal field names like "stepNumber".` : ''}
 - No filler, no generic encouragement-only lines — every item must be actionable or specific.
 - Return ONLY JSON in exactly this shape:
 {"recommendations": ["...", "..."], "errors_to_fix": ["...", "..."]}`;
@@ -342,5 +403,6 @@ module.exports = {
     computeFocus,
     computeErrorChecking,
     computeHardSkills,
+    computeStepByStepUsage,
     generateRecommendations,
 };

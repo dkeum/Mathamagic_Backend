@@ -6,7 +6,7 @@ const {
     resolveModel,
     hasCredits,
     chargeCredits,
-} = require("../aiController"); // CONFIRM ACTUAL PATH — placeholder based on relative-import depth
+} = require("../AIController"); // CONFIRM ACTUAL PATH — placeholder based on relative-import depth
 
 
 const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY, vertexai: true });

@@ -8,7 +8,7 @@ const { PARALLEL_THRESHOLD,
   updateSectionSkillsSequential,
   updateSectionSkillsParallel,
   computeSectionStatus, } = require("./helperFunctions/knowledgeTreePrompts");
-const { chargeCredits } = require("./aiController");
+const { chargeCredits } = require("./AIController");
 
 const {
   computeProgress,

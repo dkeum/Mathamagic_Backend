@@ -68,7 +68,7 @@ const signUp = asyncHandler(async (req, res) => {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Verify Your Mathamagic Account</title>
+<title>Verify Your Mathmagick Account</title>
 </head>
 <body style="margin:0; padding:0; background-color:#f7f9fb; font-family: 'Hanken Grotesk', Arial, sans-serif; color:#191c1e;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f9fb; padding: 24px 0;">
@@ -80,7 +80,7 @@ const signUp = asyncHandler(async (req, res) => {
           <tr>
             <td style="padding: 24px 24px; border-bottom: 1px solid #e0e3e5;">
               <span style="font-family: 'Space Grotesk', Arial, sans-serif; font-size: 22px; font-weight: 700; color: #0035b9;">
-                🧮 Mathamagic
+                🧮 Mathmagick
               </span>
             </td>
           </tr>

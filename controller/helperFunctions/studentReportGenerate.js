@@ -4,7 +4,7 @@ const {
     resolveModel,
     hasCredits,
     chargeCredits,
-} = require("../aiController"); // CONFIRM ACTUAL PATH
+} = require("../AIController");
 
 const { calculateCreditsUsed } = require("../../config/aiCredits");
 

@@ -38,7 +38,7 @@ async function requireStudent(req) {
 async function getQuestionsByIds(questionIds) {
   const { data, error } = await supabase
     .from("question")
-    .select("id, question, hint, formula, answer(answer)")
+    .select("id, question, hint, formula, answer")
     .in("id", questionIds);
 
   if (error) {
@@ -46,11 +46,7 @@ async function getQuestionsByIds(questionIds) {
     return [];
   }
 
-  // Normalize so callers can keep using q.answers[0].answer
-  return (data || []).map((q) => ({
-    ...q,
-    answers: q.answer || [], // Supabase names the nested relation after the table
-  }));
+  return data || [];
 }
 
 // Block before making the (expensive) Gemini call at all if the student is already out.
@@ -108,31 +104,35 @@ const verifyAnswers = asyncHandler(async (req, res) => {
     return res.status(400).json({ message: "attempts must be a non-empty array." });
   }
 
-  // Pull question text from the DB — never trust the client for this
+  // Pull question text AND the real answer from the DB — never trust the client for either.
+  // Make sure getQuestionsByIds selects `answer` (and `question_type`/`options` if you want them).
   const questionIds = attempts.map(a => a.question_id);
   const questions = await getQuestionsByIds(questionIds);
-  const questionMap = new Map(questions.map(q => [q.id, q]));
+  const questionMap = new Map(questions.map(q => [String(q.id), q]));
 
   const gradingData = attempts.map(a => {
-    const q = questionMap.get(a.question_id);
+    const q = questionMap.get(String(a.question_id));
     return {
       question_id: a.question_id,
       question: q?.question ?? "",
+      correct_answer: q?.answer ?? "",
       answer_given: a.answer_given,
     };
   });
 
-  console.log(gradingData);
-
   try {
     const prompt = `You are an evaluation engine for a math platform.
-There is no answer key provided — judge each item purely using your own mathematical reasoning.
-For each item, determine whether "answer_given" correctly answers "question" (accept mathematically equivalent forms, e.g. simplified fractions, different but equal expressions).
+Each item gives the question, the official "correct_answer", and the student's "answer_given".
+Mark "is_correct": true if "answer_given" is mathematically equivalent to "correct_answer"
+(accept equivalent forms: simplified fractions, decimals vs fractions, reordered but equal
+expressions, etc). Only fall back to independent judgement of "question" if "correct_answer"
+is empty or missing.
 
 Data:
 ${JSON.stringify(gradingData, null, 2)}
 
-Return a JSON array of objects with "question_id" and "is_correct" (boolean).`;
+Return a JSON array of objects with "question_id" and "is_correct" (boolean).
+Include every question_id from the input, in the same order, exactly once.`;
 
     const response = await genAI.models.generateContent({
       model,
@@ -140,18 +140,20 @@ Return a JSON array of objects with "question_id" and "is_correct" (boolean).`;
       config: { responseMimeType: "application/json" },
     });
 
-    // console.log(response)
+    const rawResults = JSON.parse(response.text);
 
-    const results = JSON.parse(response.text);
+    // Defensive merge: if the model drops/renames an id, don't silently lose that attempt.
+    const resultMap = new Map(rawResults.map(r => [String(r.question_id), r.is_correct]));
+    const results = gradingData.map(g => ({
+      question_id: g.question_id,
+      is_correct: resultMap.has(String(g.question_id))
+        ? resultMap.get(String(g.question_id))
+        : normalizeLatex(g.answer_given) === normalizeLatex(g.correct_answer), // safety net
+    }));
 
-    console.log("AI grading results:", results);
-
-    console.log(response.usageMetadata)
     const creditsUsed = await calculateCreditsUsed(model, response.usageMetadata);
-
-    console.log(creditsUsed)
     const remaining = await chargeCredits(student.id, creditsUsed);
-    await recordAiUsage(student.id, creditsUsed); // NEW
+    await recordAiUsage(student.id, creditsUsed);
 
     res.set("X-AI-Credits-Remaining", remaining ?? student.AI_Credit);
     return res.json({ results });

@@ -124,6 +124,8 @@ app.get("/", (req, res) => {
 });
 
 app.use("/", require("./routes/publicAPI/contactRoute"));
+app.use("/", require("./routes/leadGenerateRoute"));
+
 app.use("/", require("./routes/stripeRoute"))
 app.use("/", require("./routes/authRoute")); // Good for Serverless function
 app.use("/", require("./routes/questionRoute"))
@@ -138,6 +140,10 @@ app.use("/", require("./routes/AIRoute"))
 app.use("/", require("./routes/cronJobRoute"))
 app.use("/", require("./routes/settingRoute"))
 app.use("/", require("./routes/userRoute")) // keep at end
+
+
+// DEVELOPMENT ROUTE 
+app.use("/", require("./routes/dev/testQuestions")) // keep at end
 
 
 app.listen(PORT, () => {

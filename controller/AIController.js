@@ -35,6 +35,21 @@ async function requireStudent(req) {
 }
 
 
+async function recordAnswerKeyFlag(questionId, dbAnswer, aiSolution) {
+  const { error } = await supabase
+    .from("answer_key_flag")
+    .insert({
+      question_id: questionId,
+      db_answer: dbAnswer,
+      ai_solution: aiSolution,
+    });
+
+  if (error) {
+    console.error(`Failed to record answer_key_flag for question ${questionId}:`, error);
+  }
+}
+
+
 async function getQuestionsByIds(questionIds) {
   const { data, error } = await supabase
     .from("question")
@@ -48,6 +63,39 @@ async function getQuestionsByIds(questionIds) {
 
   return data || [];
 }
+
+
+function normalizeLatex(str) {
+  if (!str) return "";
+
+  let normalized = str.trim();
+
+  // Remove all regular spaces
+  normalized = normalized.replace(/\s+/g, "");
+
+  // Remove LaTeX spacing commands like \ , \quad, \! etc.
+  normalized = normalized.replace(/\\(,|;|:|quad|qquad|!)/g, "");
+
+  // Replace \mathrm{...} with just its contents
+  normalized = normalized.replace(/\\mathrm\{([^}]+)\}/g, "$1");
+
+  // Replace Unicode superscripts (², ³, etc.) with ^2, ^3
+  const superscriptMap = {
+    '⁰': '0', '¹': '1', '²': '2', '³': '3',
+    '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7',
+    '⁸': '8', '⁹': '9'
+  };
+  normalized = normalized.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]/g, m => "^" + superscriptMap[m]);
+
+  // Lowercase for unit matching (e.g., CM → cm)
+  normalized = normalized.toLowerCase();
+
+  return normalized;
+}
+
+
+
+
 
 // Block before making the (expensive) Gemini call at all if the student is already out.
 // Actual cost isn't known until the response comes back, so the real charge happens after —
@@ -88,7 +136,31 @@ async function recordAiUsage(studentId, credits, category = "ai_chat") {
 }
 
 
-// POST /ai/verify-answers
+
+
+async function getQuestionsByIds(questionIds) {
+  const { data, error } = await supabase
+    .from("question")
+    .select("id, question, hint, formula, answer, options, question_type")
+    .in("id", questionIds);
+
+  if (error) {
+    console.error("getQuestionsByIds failed:", error);
+    return [];
+  }
+
+  return data || [];
+}
+
+// Exactly one option should have correct: true. Anything else means bad seed data.
+function getCorrectOption(options) {
+  if (!Array.isArray(options)) return { ok: false, correctOptions: [] };
+  const correctOptions = options.filter((o) => o?.correct === true);
+  return { ok: correctOptions.length === 1, correctOptions };
+}
+
+
+
 const verifyAnswers = asyncHandler(async (req, res) => {
   const { student, error } = await requireStudent(req);
   if (error) return res.status(error.status).json({ message: error.message });
@@ -104,8 +176,6 @@ const verifyAnswers = asyncHandler(async (req, res) => {
     return res.status(400).json({ message: "attempts must be a non-empty array." });
   }
 
-  // Pull question text AND the real answer from the DB — never trust the client for either.
-  // Make sure getQuestionsByIds selects `answer` (and `question_type`/`options` if you want them).
   const questionIds = attempts.map(a => a.question_id);
   const questions = await getQuestionsByIds(questionIds);
   const questionMap = new Map(questions.map(q => [String(q.id), q]));
@@ -114,44 +184,115 @@ const verifyAnswers = asyncHandler(async (req, res) => {
     const q = questionMap.get(String(a.question_id));
     return {
       question_id: a.question_id,
+      question_type: q?.question_type ?? "free_response",
       question: q?.question ?? "",
       correct_answer: q?.answer ?? "",
       answer_given: a.answer_given,
+      selected_label: a.selected_label ?? null,
+      options: q?.options ?? null,
     };
   });
 
+  const isMC = (g) => g.question_type === "multiple_choice" && Array.isArray(g.options);
+  const mcItems = gradingData.filter(isMC);
+  const freeItems = gradingData.filter(g => !isMC(g));
+
   try {
-    const prompt = `You are an evaluation engine for a math platform.
-Each item gives the question, the official "correct_answer", and the student's "answer_given".
-Mark "is_correct": true if "answer_given" is mathematically equivalent to "correct_answer"
-(accept equivalent forms: simplified fractions, decimals vs fractions, reordered but equal
-expressions, etc). Only fall back to independent judgement of "question" if "correct_answer"
-is empty or missing.
+    // ── Multiple choice: graded deterministically from options[].correct — no AI call ──
+    const mcResults = [];
+    for (const g of mcItems) {
+      const { ok, correctOptions } = getCorrectOption(g.options);
+
+      if (!ok) {
+        console.warn(
+          `Question ${g.question_id} has ${correctOptions.length} options marked correct (expected exactly 1) — flagging.`
+        );
+        await recordAnswerKeyFlag(
+          g.question_id,
+          JSON.stringify(g.options),
+          `${correctOptions.length} options marked correct; expected exactly 1`
+        );
+        // No reliable ground truth — fall back to a literal text match against
+        // whichever legacy `answer` field exists, rather than silently marking wrong.
+        mcResults.push({
+          question_id: g.question_id,
+          is_correct: normalizeLatex(g.answer_given) === normalizeLatex(g.correct_answer),
+        });
+        continue;
+      }
+
+      const correctLabel = correctOptions[0].label;
+      mcResults.push({
+        question_id: g.question_id,
+        is_correct: g.selected_label === correctLabel,
+      });
+    }
+
+    // ── Free response: still needs the AI to judge equivalent forms ──
+    let freeResults = [];
+    let creditsUsed = 0;
+
+    if (freeItems.length > 0) {
+      const prompt = `You are an expert math evaluator for a math platform.
+
+For each item, you are given "question", the answer key "correct_answer" (which may
+occasionally be wrong or missing), and the student's "answer_given".
+
+For every item:
+1. Independently solve "question" yourself to determine the actual correct answer.
+2. Compare "answer_given" against your own solution. Accept mathematically equivalent
+   forms (simplified/unsimplified fractions, decimals vs fractions, reordered but
+   equal expressions, equivalent trig/log forms, etc).
+3. Also compare your own solution against "correct_answer" so mismatches between the
+   answer key and reality can be flagged — do not let a wrong "correct_answer" override
+   your own independent solving.
 
 Data:
-${JSON.stringify(gradingData, null, 2)}
+${JSON.stringify(freeItems, null, 2)}
 
-Return a JSON array of objects with "question_id" and "is_correct" (boolean).
+Return a JSON array of objects, one per item, each with:
+- "question_id"
+- "is_correct": boolean, whether "answer_given" matches YOUR independently solved answer
+- "answer_key_ok": boolean, whether "correct_answer" matches your independently solved answer (true if correct_answer was empty/missing and you had to solve from scratch)
+- "correct_solution": your own computed correct answer, as a string
+
 Include every question_id from the input, in the same order, exactly once.`;
 
-    const response = await genAI.models.generateContent({
-      model,
-      contents: prompt,
-      config: { responseMimeType: "application/json" },
-    });
+      const response = await genAI.models.generateContent({
+        model,
+        contents: prompt,
+        config: { responseMimeType: "application/json" },
+      });
 
-    const rawResults = JSON.parse(response.text);
+      const rawResults = JSON.parse(response.text);
+      const resultMap = new Map(rawResults.map(r => [String(r.question_id), r]));
 
-    // Defensive merge: if the model drops/renames an id, don't silently lose that attempt.
-    const resultMap = new Map(rawResults.map(r => [String(r.question_id), r.is_correct]));
-    const results = gradingData.map(g => ({
-      question_id: g.question_id,
-      is_correct: resultMap.has(String(g.question_id))
-        ? resultMap.get(String(g.question_id))
-        : normalizeLatex(g.answer_given) === normalizeLatex(g.correct_answer), // safety net
-    }));
+      for (const g of freeItems) {
+        const r = resultMap.get(String(g.question_id));
 
-    const creditsUsed = await calculateCreditsUsed(model, response.usageMetadata);
+        if (!r) {
+          freeResults.push({
+            question_id: g.question_id,
+            is_correct: normalizeLatex(g.answer_given) === normalizeLatex(g.correct_answer),
+          });
+          continue;
+        }
+
+        if (r.answer_key_ok === false) {
+          console.warn(
+            `Answer key mismatch for question ${g.question_id}: DB has "${g.correct_answer}", model solved "${r.correct_solution}"`
+          );
+          await recordAnswerKeyFlag(g.question_id, g.correct_answer, r.correct_solution);
+        }
+
+        freeResults.push({ question_id: g.question_id, is_correct: !!r.is_correct });
+      }
+
+      creditsUsed = await calculateCreditsUsed(model, response.usageMetadata);
+    }
+
+    const results = [...mcResults, ...freeResults];
+
     const remaining = await chargeCredits(student.id, creditsUsed);
     await recordAiUsage(student.id, creditsUsed);
 

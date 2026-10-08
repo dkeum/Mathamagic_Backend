@@ -139,7 +139,8 @@ app.use("/", require("./routes/AIVideoGenerateRoute"))
 app.use("/", require("./routes/AIRoute"))
 app.use("/", require("./routes/cronJobRoute"))
 app.use("/", require("./routes/settingRoute"))
-app.use("/", require("./routes/userRoute")) // keep at end
+app.use("/", require("./routes/BookingRoute"))
+app.use("/", require("./routes/userRoute"))
 
 
 // DEVELOPMENT ROUTE 

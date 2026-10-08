@@ -19,6 +19,7 @@ async function syncCalendarChanges(retry = true) {
                 calendarId: "primary",
                 singleEvents: true,
                 showDeleted: true,
+                conferenceDataVersion: 1,
                 pageToken,
                 ...(syncToken
                     ? { syncToken }
@@ -53,11 +54,73 @@ async function syncCalendarChanges(retry = true) {
 }
 
 async function handleEvent(event) {
+    // Cancelled events from a sync only carry the id and status, nothing else
     if (event.status === "cancelled") {
-        // booking cancelled or deleted
+        await supabase
+            .from("bookings")
+            .update({ status: "cancelled", updated_at: new Date().toISOString() })
+            .eq("google_event_id", event.id);
         return;
     }
-    // new or updated event: event.id, event.start, event.attendees, ...
+
+    // The booker is the attendee who isn't you
+    const me = (process.env.GOOGLE_CALENDAR_ID || "").toLowerCase();
+    const guests = (event.attendees || []).filter(
+        (a) => !a.resource && a.email?.toLowerCase() !== me
+    );
+    const booker = guests[0];
+    const bookerEmail = booker?.email?.toLowerCase() || null;
+
+    // Link to a lead if the email matches
+    let leadId = null;
+    if (bookerEmail) {
+        const { data: lead } = await supabase
+            .from("leads")
+            .select("id")
+            .eq("email", bookerEmail)
+            .limit(1)
+            .maybeSingle();
+        leadId = lead?.id || null;
+    }
+
+    const videoEntry = event.conferenceData?.entryPoints?.find(
+        (e) => e.entryPointType === "video"
+    );
+    const urlInText = `${event.location || ""} ${event.description || ""}`.match(
+        /https?:\/\/[^\s"<]*(zoom\.us|teams\.microsoft\.com|meet\.google\.com)[^\s"<]*/i
+    )?.[0];
+
+    await supabase.from("bookings").upsert(
+        {
+            google_event_id: event.id,
+            status: "confirmed",
+            title: event.summary || null,
+            description: event.description || null,
+            start_time: event.start?.dateTime || event.start?.date || null,
+            end_time: event.end?.dateTime || event.end?.date || null,
+            booker_email: bookerEmail,
+            booker_name: booker?.displayName || null,
+            attendees: guests.map((a) => ({
+                email: a.email,
+                name: a.displayName,
+                response: a.responseStatus,
+            })),
+            meet_link: event.hangoutLink || videoEntry?.uri || urlInText || null,
+            lead_id: leadId,
+            booked_at: event.created || null,
+            updated_at: new Date().toISOString(),
+        },
+        { onConflict: "google_event_id" }
+    );
+
+    // Move the lead to booked_call; the DB trigger cancels their pending follow-ups
+    if (leadId) {
+        await supabase
+            .from("leads")
+            .update({ stage: "booked_call" })
+            .eq("id", leadId)
+            .in("stage", ["new_lead", "cold_lead", "in_conversation", "follow_up"]);
+    }
 }
 
 async function googleCalendarWebhook(req, res) {
@@ -79,5 +142,8 @@ async function googleCalendarWebhook(req, res) {
         return res.sendStatus(500); // Google retries with backoff
     }
 }
+
+
+
 
 module.exports = { googleCalendarWebhook };

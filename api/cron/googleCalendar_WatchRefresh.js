@@ -22,7 +22,7 @@ async function googleCalendarWatchRefresh(req, res) {
             requestBody: {
                 id: crypto.randomUUID(),
                 type: "web_hook",
-                address: "https://mathamagic-backend.vercel.app/api/google-calendar/webhook",
+                address: "https://mathamagic-backend.vercel.app/google-calendar/webhook",
                 token: process.env.GOOGLE_WEBHOOK_TOKEN,
             },
         });

@@ -39,7 +39,7 @@ async function syncCalendarChanges(retry = true) {
     try {
         do {
             const { data } = await calendar.events.list({
-                calendarId: "primary",
+                calendarId: process.env.GOOGLE_CALENDAR_ID,
                 singleEvents: true,
                 showDeleted: true,
                 conferenceDataVersion: 1,

@@ -18,7 +18,7 @@ async function googleCalendarWatchRefresh(req, res) {
 
         // Create the new channel first so there's no gap in coverage
         const { data: ch } = await calendar.events.watch({
-            calendarId: "primary",
+            calendarId: process.env.GOOGLE_CALENDAR_I,
             requestBody: {
                 id: crypto.randomUUID(),
                 type: "web_hook",

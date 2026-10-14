@@ -12,14 +12,16 @@ const refreshFxRate = async (req, res) => {
   }
 
   try {
-    const response = await fetch("https://api.frankfurter.dev/v2/latest?base=USD&symbols=CAD");
-    const data = await response.json();
-    const rate = data.rates?.CAD;
-
-    if (!rate || typeof rate !== "number") {
-      throw new Error("Invalid rate response");
+    const response = await fetch("https://api.frankfurter.dev/v2/rate/USD/CAD");
+    if (!response.ok) {
+      throw new Error(`FX API responded ${response.status}`);
     }
+    const data = await response.json();
+    const rate = data.rate;
 
+    if (typeof rate !== "number" || !Number.isFinite(rate) || rate <= 0) {
+      throw new Error(`Invalid rate response: ${JSON.stringify(data).slice(0, 200)}`);
+    }
     // Update the database
     const { error } = await supabase
       .from("fx_rate_cache")
@@ -34,7 +36,7 @@ const refreshFxRate = async (req, res) => {
   } catch (err) {
     console.error("FX rate refresh failed, keeping last known rate:", err);
     // don't error the cron — stale rate is fine for a day
-    return res.status(200).json({ updated: false }); 
+    return res.status(200).json({ updated: false });
   }
 };
 

@@ -66,6 +66,9 @@ async function syncCalendarChanges(retry = true) {
 
     // Only save the token after the changes were processed successfully
     for (const event of changed) {
+
+
+        console.log("Processing event:", event.id, event.status, event.summary || "(no title)");
         await handleEvent(event);
     }
 

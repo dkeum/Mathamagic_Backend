@@ -204,6 +204,9 @@ async function handleEvent(event) {
 }
 
 async function googleCalendarWebhook(req, res) {
+
+    console.log("Google Calendar webhook received:", req.get("X-Goog-Resource-State"), req.get("X-Goog-Channel-Token"));
+
     if (req.get("X-Goog-Channel-Token") !== process.env.GOOGLE_WEBHOOK_TOKEN) {
         return res.sendStatus(401);
     }

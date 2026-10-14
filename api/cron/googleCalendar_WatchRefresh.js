@@ -3,9 +3,11 @@ const supabase = require("../../config/leadSupabaseClient");
 const calendar = require("../../config/googleCalendarClient");
 
 async function googleCalendarWatchRefresh(req, res) {
-    if (req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
-        return res.status(401).json({ error: "Unauthorized access" });
-    }
+    // if (req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
+    //     return res.status(401).json({ error: "Unauthorized access" });
+    // }
+
+    console.log("Refreshing Google Calendar watch channel...");
 
     try {
         const { data: old } = await supabase

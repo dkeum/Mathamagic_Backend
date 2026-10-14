@@ -35,7 +35,7 @@
       "schedule": "0 6 * * *"
     },
     {
-      "path": "/api/cron/google-calendar-watch-refresh",
+      "path": "/cron/google-calendar-watch-refresh",
       "schedule": "0 6 * * *"
     }
   ]

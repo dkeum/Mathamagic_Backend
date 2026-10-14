@@ -42,6 +42,10 @@ async function googleCalendarWatchRefresh(req, res) {
                 .catch(() => { }); // already expired is fine
         }
 
+
+        const { data: cal } = await calendar.calendars.get({ calendarId: "primary" });
+        console.log("Watching calendar:", cal.id, "|", cal.summary);
+
         return res.status(200).json({ ok: true, expires: ch.expiration });
     } catch (err) {
         console.error("watch refresh failed:", err);

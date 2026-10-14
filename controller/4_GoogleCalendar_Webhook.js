@@ -1,15 +1,16 @@
 const supabase = require("../config/leadSupabaseClient"); // service role client
 const calendar = require("../config/googleCalendarClient"); // your authed google.calendar(...)
-const transporter = require("../config/mailer"); // <- adjust: your nodemailer transporter (it was used but never imported)
+const transporter = require("../config/mailer"); // <- adjust: your nodemailer transporter
 
 /**
  * Calls your existing POST /bookings/email route.
- * API_BASE_URL must be the full base your router is mounted on, e.g. https://api.mathmagick.com/api
- * INTERNAL_API_TOKEN is a shared secret so only this webhook (not the public) can trigger the email.
+ * API_BASE_URL = your API's base URL with no trailing slash, e.g. https://mathamagic-backend.vercel.app
+ * INTERNAL_API_TOKEN = shared secret that /bookings/email checks in the x-internal-token header.
  */
 async function callBookingEmailRoute(payload) {
-
-    console.log("Calling the booking/email route and seeing if the email is being sent")
+    if (!process.env.API_BASE_URL || !process.env.INTERNAL_API_TOKEN) {
+        throw new Error("API_BASE_URL or INTERNAL_API_TOKEN is not set");
+    }
 
     const res = await fetch(`${process.env.API_BASE_URL}/bookings/email`, {
         method: "POST",
@@ -25,13 +26,18 @@ async function callBookingEmailRoute(payload) {
 }
 
 async function syncCalendarChanges(retry = true) {
+    if (!process.env.GOOGLE_CALENDAR_ID) {
+        throw new Error("GOOGLE_CALENDAR_ID is not set");
+    }
+
     const { data: row } = await supabase
         .from("calendar_sync_state")
         .select("sync_token")
-        .eq("calendar_id", "primary")
+        .eq("calendar_id", "primary") // just the row key in your own table, not a Google calendar ID
         .maybeSingle();
 
     const syncToken = row?.sync_token || undefined;
+    const isFirstSync = !syncToken;
     const changed = [];
     let pageToken;
     let nextSyncToken;
@@ -64,19 +70,25 @@ async function syncCalendarChanges(retry = true) {
         throw err;
     }
 
-    // Only save the token after the changes were processed successfully
-    for (const event of changed) {
-
-
-        console.log("Processing event:", event.id, event.status, event.summary || "(no title)");
-        await handleEvent(event);
+    // The very first run only records the bookmark. Otherwise every event already on the
+    // calendar (your recurring sessions, personal events) would be treated as a new booking.
+    if (isFirstSync) {
+        console.log(`First sync: saving bookmark, skipping ${changed.length} existing events`);
+    } else {
+        for (const event of changed) {
+            console.log("Processing event:", event.id, event.status, event.summary || "(no title)");
+            await handleEvent(event);
+        }
     }
 
-    await supabase.from("calendar_sync_state").upsert({
-        calendar_id: "primary",
-        sync_token: nextSyncToken,
-        updated_at: new Date().toISOString(),
-    });
+    // Only save the token after the changes were processed successfully
+    if (nextSyncToken) {
+        await supabase.from("calendar_sync_state").upsert({
+            calendar_id: "primary",
+            sync_token: nextSyncToken,
+            updated_at: new Date().toISOString(),
+        });
+    }
 }
 
 async function handleEvent(event) {
@@ -98,26 +110,30 @@ async function handleEvent(event) {
         return;
     }
 
+    // Repeating events (e.g. your weekly tutoring sessions) are not booked calls
+    if (event.recurringEventId) return;
+
     // The booker is the attendee who isn't you
     const me = (process.env.GOOGLE_CALENDAR_ID || "").toLowerCase();
     const guests = (event.attendees || []).filter(
-        (a) => !a.resource && a.email?.toLowerCase() !== me
+        (a) => !a.resource && !a.organizer && a.email?.toLowerCase() !== me
     );
     const booker = guests[0];
     const bookerEmail = booker?.email?.toLowerCase() || null;
     const bookerName = booker?.displayName || null;
 
+    // No guest = personal event, focus time, etc. Not a booked call.
+    if (!bookerEmail) return;
+
     // Link to a lead if the email matches
     let leadId = null;
-    if (bookerEmail) {
-        const { data: lead } = await supabase
-            .from("leads")
-            .select("id")
-            .eq("email", bookerEmail)
-            .limit(1)
-            .maybeSingle();
-        leadId = lead?.id || null;
-    }
+    const { data: lead } = await supabase
+        .from("leads")
+        .select("id")
+        .eq("email", bookerEmail)
+        .limit(1)
+        .maybeSingle();
+    leadId = lead?.id || null;
 
     const videoEntry = event.conferenceData?.entryPoints?.find(
         (e) => e.entryPointType === "video"
@@ -177,7 +193,7 @@ async function handleEvent(event) {
 
     // Immediately call POST /bookings/email, once per booking.
     // confirmation_email_sent_at makes this safe if Google re-sends the same change.
-    if (bookerEmail && !saved.confirmation_email_sent_at) {
+    if (!saved.confirmation_email_sent_at) {
         try {
             await callBookingEmailRoute({
                 bookingId: saved.id,
@@ -203,15 +219,15 @@ async function handleEvent(event) {
         transporter.sendMail({
             from: `"Mathmagick" <${process.env.NOREPLY_GMAIL}>`,
             to: process.env.OWNER_EMAIL,
-            subject: `New booked call: ${bookerName || bookerEmail || "unknown"}`,
-            text: `${bookerEmail || "No email"}\n${event.start?.dateTime}\n${meetLink || ""}`,
+            subject: `New booked call: ${bookerName || bookerEmail}`,
+            text: `${bookerEmail}\n${event.start?.dateTime}\n${meetLink || ""}`,
         }).catch((e) => console.error("owner notification failed:", e.message));
     }
 }
 
 async function googleCalendarWebhook(req, res) {
-
-    console.log("Google Calendar webhook received:", req.get("X-Goog-Resource-State"), req.get("X-Goog-Channel-Token"));
+    // Never log the channel token: it is a secret
+    console.log("Google Calendar webhook received:", req.get("X-Goog-Resource-State"));
 
     if (req.get("X-Goog-Channel-Token") !== process.env.GOOGLE_WEBHOOK_TOKEN) {
         return res.sendStatus(401);

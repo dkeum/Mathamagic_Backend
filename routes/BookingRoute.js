@@ -20,6 +20,7 @@ const applyCustomCors = require("./customCorsHelper/helperFunctions/customCors")
 //  - the email links (ics / cancel / reschedule) are opened directly by a parent clicking in their inbox,
 //    and the confirm button posts back to this same API, so there's no cross-site request to check
 router.post("/google-calendar/webhook", googleCalendarWebhook);
+
 router.get("/cron/google-calendar-watch-refresh", googleCalendarWatchRefresh);
 
 // Booking a call flow

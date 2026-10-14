@@ -1,5 +1,25 @@
 const supabase = require("../config/leadSupabaseClient"); // service role client
 const calendar = require("../config/googleCalendarClient"); // your authed google.calendar(...)
+const transporter = require("../config/mailer"); // <- adjust: your nodemailer transporter (it was used but never imported)
+
+/**
+ * Calls your existing POST /bookings/email route.
+ * API_BASE_URL must be the full base your router is mounted on, e.g. https://api.mathmagick.com/api
+ * INTERNAL_API_TOKEN is a shared secret so only this webhook (not the public) can trigger the email.
+ */
+async function callBookingEmailRoute(payload) {
+    const res = await fetch(`${process.env.API_BASE_URL}/bookings/email`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "x-internal-token": process.env.INTERNAL_API_TOKEN,
+        },
+        body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+        throw new Error(`/bookings/email responded ${res.status}: ${await res.text()}`);
+    }
+}
 
 async function syncCalendarChanges(retry = true) {
     const { data: row } = await supabase
@@ -56,10 +76,19 @@ async function syncCalendarChanges(retry = true) {
 async function handleEvent(event) {
     // Cancelled events from a sync only carry the id and status, nothing else
     if (event.status === "cancelled") {
-        await supabase
+        const { data: rows } = await supabase
             .from("bookings")
             .update({ status: "cancelled", updated_at: new Date().toISOString() })
-            .eq("google_event_id", event.id);
+            .eq("google_event_id", event.id)
+            .select("id, lead_id");
+
+        for (const row of rows || []) {
+            await supabase.rpc("schedule_booking_messages", { p_booking_id: row.id }); // cancels pending reminders
+            if (row.lead_id) {
+                await supabase.from("leads").update({ stage: "cancelled" })
+                    .eq("id", row.lead_id).eq("stage", "booked_call");
+            }
+        }
         return;
     }
 
@@ -70,6 +99,7 @@ async function handleEvent(event) {
     );
     const booker = guests[0];
     const bookerEmail = booker?.email?.toLowerCase() || null;
+    const bookerName = booker?.displayName || null;
 
     // Link to a lead if the email matches
     let leadId = null;
@@ -89,29 +119,44 @@ async function handleEvent(event) {
     const urlInText = `${event.location || ""} ${event.description || ""}`.match(
         /https?:\/\/[^\s"<]*(zoom\.us|teams\.microsoft\.com|meet\.google\.com)[^\s"<]*/i
     )?.[0];
+    const meetLink = event.hangoutLink || videoEntry?.uri || urlInText || null;
+    const startTime = event.start?.dateTime || event.start?.date || null;
+    const endTime = event.end?.dateTime || event.end?.date || null;
 
-    await supabase.from("bookings").upsert(
-        {
-            google_event_id: event.id,
-            status: "confirmed",
-            title: event.summary || null,
-            description: event.description || null,
-            start_time: event.start?.dateTime || event.start?.date || null,
-            end_time: event.end?.dateTime || event.end?.date || null,
-            booker_email: bookerEmail,
-            booker_name: booker?.displayName || null,
-            attendees: guests.map((a) => ({
-                email: a.email,
-                name: a.displayName,
-                response: a.responseStatus,
-            })),
-            meet_link: event.hangoutLink || videoEntry?.uri || urlInText || null,
-            lead_id: leadId,
-            booked_at: event.created || null,
-            updated_at: new Date().toISOString(),
-        },
-        { onConflict: "google_event_id" }
-    );
+    // Check BEFORE saving, so we know whether this booking is new
+    const { data: existing } = await supabase
+        .from("bookings").select("id").eq("google_event_id", event.id).maybeSingle();
+    const isNew = !existing;
+
+    // One save with every field (the booker's name and email are stored here)
+    const { data: saved, error } = await supabase
+        .from("bookings")
+        .upsert(
+            {
+                google_event_id: event.id,
+                status: "confirmed",
+                title: event.summary || null,
+                description: event.description || null,
+                start_time: startTime,
+                end_time: endTime,
+                booker_email: bookerEmail,
+                booker_name: bookerName,
+                attendees: guests.map((a) => ({
+                    email: a.email,
+                    name: a.displayName,
+                    response: a.responseStatus,
+                })),
+                meet_link: meetLink,
+                lead_id: leadId,
+                booked_at: event.created || null,
+                timezone: event.start?.timeZone || null,
+                updated_at: new Date().toISOString(),
+            },
+            { onConflict: "google_event_id" }
+        )
+        .select("id, confirmation_email_sent_at")
+        .single();
+    if (error) throw error;
 
     // Move the lead to booked_call; the DB trigger cancels their pending follow-ups
     if (leadId) {
@@ -120,6 +165,41 @@ async function handleEvent(event) {
             .update({ stage: "booked_call" })
             .eq("id", leadId)
             .in("stage", ["new_lead", "cold_lead", "in_conversation", "follow_up"]);
+        await supabase.rpc("apply_booked_call", { p_lead_id: leadId });
+    }
+    await supabase.rpc("schedule_booking_messages", { p_booking_id: saved.id });
+
+    // Immediately call POST /bookings/email, once per booking.
+    // confirmation_email_sent_at makes this safe if Google re-sends the same change.
+    if (bookerEmail && !saved.confirmation_email_sent_at) {
+        try {
+            await callBookingEmailRoute({
+                bookingId: saved.id,
+                name: bookerName,
+                email: bookerEmail,
+                startTime,
+                endTime,
+                timezone: event.start?.timeZone || null,
+                meetLink,
+            });
+            await supabase
+                .from("bookings")
+                .update({ confirmation_email_sent_at: new Date().toISOString() })
+                .eq("id", saved.id);
+        } catch (e) {
+            // Never let an email problem break the calendar sync
+            console.error("booking email failed:", e.message);
+        }
+    }
+
+    if (isNew) {
+        // Internal notification (never let this break the sync)
+        transporter.sendMail({
+            from: `"Mathmagick" <${process.env.NOREPLY_GMAIL}>`,
+            to: process.env.OWNER_EMAIL,
+            subject: `New booked call: ${bookerName || bookerEmail || "unknown"}`,
+            text: `${bookerEmail || "No email"}\n${event.start?.dateTime}\n${meetLink || ""}`,
+        }).catch((e) => console.error("owner notification failed:", e.message));
     }
 }
 
@@ -142,8 +222,5 @@ async function googleCalendarWebhook(req, res) {
         return res.sendStatus(500); // Google retries with backoff
     }
 }
-
-
-
 
 module.exports = { googleCalendarWebhook };

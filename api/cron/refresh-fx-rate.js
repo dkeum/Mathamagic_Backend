@@ -5,7 +5,7 @@ const refreshFxRate = async (req, res) => {
   // Authorization header on cron-triggered requests — verify it so
   // this endpoint can't be triggered by anyone who finds the URL.
 
-  console.log(req?.headers?.authorization)
+  // console.log(req?.headers?.authorization)
   const authHeader = req.headers.authorization;
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return res.status(401).json({ message: "Unauthorized" });

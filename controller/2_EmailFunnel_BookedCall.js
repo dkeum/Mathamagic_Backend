@@ -1,8 +1,8 @@
 const asyncHandler = require("express-async-handler");
 const supabase = require("../config/leadSupabaseClient"); // service role client
 const calendar = require("../config/googleCalendarClient"); // your authed google.calendar(...)
-const transporter = require("../config/mailer"); // <- adjust: your nodemailer transporter
-const TEMPLATES = require("./bookingEmailTemplates");
+const transporter = require("../config/mailer");
+const TEMPLATES = require("./email_template/bookingEmailTemplates");
 
 const API_BASE = (process.env.API_BASE_URL || "").replace(/\/$/, ""); // e.g. https://api.mathmagick.com/api
 const SITE_URL = (process.env.FRONTEND_URL || "https://mathmagick.com").replace(/\/$/, "");

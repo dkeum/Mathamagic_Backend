@@ -8,6 +8,9 @@ const transporter = require("../config/mailer"); // <- adjust: your nodemailer t
  * INTERNAL_API_TOKEN is a shared secret so only this webhook (not the public) can trigger the email.
  */
 async function callBookingEmailRoute(payload) {
+
+    console.log("Calling the booking/email route and seeing if the email is being sent")
+
     const res = await fetch(`${process.env.API_BASE_URL}/bookings/email`, {
         method: "POST",
         headers: {

@@ -5,12 +5,14 @@ const router = express.Router();
 const { googleCalendarWatchRefresh } = require("../api/cron/googleCalendar_WatchRefresh");
 const { googleCalendarWebhook } = require("../controller/4_GoogleCalendar_Webhook");
 const {
-    getBookings,
-    sendBookingEmail,
+
     downloadIcs,
     cancelBooking,
     rescheduleBooking,
 } = require("../controller/bookingLinks");
+
+
+const { sendBookingEmail, getBookings } = require("../controller/2_EmailFunnel_BookedCall");
 const applyCustomCors = require("./customCorsHelper/helperFunctions/customCors");
 
 // Everything registered BEFORE applyCustomCors skips the CORS check. These routes need that because
@@ -24,7 +26,7 @@ router.post("/google-calendar/webhook", googleCalendarWebhook);
 router.get("/cron/google-calendar-watch-refresh", googleCalendarWatchRefresh);
 
 // Booking a call flow
-// router.post("/bookings/email", sendBookingEmail);
+router.post("/bookings/email", sendBookingEmail);
 router.get("/bookings/ics", downloadIcs);
 router.get("/bookings/cancel", cancelBooking); // shows the confirm page
 router.post("/bookings/cancel", cancelBooking); // does the cancel

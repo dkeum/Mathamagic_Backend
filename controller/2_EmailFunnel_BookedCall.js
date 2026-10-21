@@ -98,7 +98,7 @@ const sendBookingEmail = asyncHandler(async (req, res) => {
     const when = formatWhen(booking);
     const links = linksFor(booking);
     const vars = {
-        "user.name": process.env.OWNER_NAME || "Mathmagick",
+        "user.name": "Daniel",
         "appointment.only_start_date": when.date,
         "appointment.only_start_time": when.time,
         "appointment.timezone": when.tzName,

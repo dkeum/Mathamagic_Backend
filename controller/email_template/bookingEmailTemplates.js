@@ -12,18 +12,14 @@ module.exports = {
         subject: "[Important] How to prepare for your call",
         body: `Hey hey! It’s {{user.name}}
 
-Thanks for scheduling a time to speak with me regarding your child’s Math studies.
+Thanks for scheduling a time to speak with me regarding your child’s math studies.
 
 Here are the call details:
 {{appointment.only_start_date}}
 {{appointment.only_start_time}} {{appointment.timezone}}
 
-Link to join the zoom call: {{appointment.meeting_location}}
+Link to join the google meets call: {{appointment.meeting_location}}
 
-You can add the appointment to your calendar here:  
-Google Calendar: {{appointment.add_to_google_calendar}}
-iCal/Outlook:
-{{appointment.add_to_ical_outlook}}
 
 If you need to cancel please give 2 hours notice and click here:  {{appointment.cancellation_link}}
 
@@ -53,7 +49,7 @@ Here are the call details:
 {{appointment.only_start_date}}
 {{appointment.only_start_time}} {{appointment.timezone}}
 
-Link to join the zoom call: {{appointment.meeting_location}}
+Link to join the google meets call: {{appointment.meeting_location}}
 
 You can add the appointment to your calendar here:  
 Google Calendar: {{appointment.add_to_google_calendar}}
@@ -99,7 +95,7 @@ Here are the call details:
 {{appointment.only_start_date}}
 {{appointment.only_start_time}} {{appointment.timezone}}
 
-Link to join the zoom call: {{appointment.meeting_location}}
+Link to join the google meets call: {{appointment.meeting_location}}
 
 If you need to cancel please give 2 hours notice and click here:  {{appointment.cancellation_link}}
 
@@ -118,6 +114,6 @@ I'll see you shortly!
 Thanks 
 {{user.name}}
 
-PS - Please make sure you have your Zoom link ready before the call so we can get started right away.`,
+PS - Please make sure you have your Google Meet link ready before the call so we can get started right away.`,
     },
 };

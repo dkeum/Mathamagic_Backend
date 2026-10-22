@@ -20,10 +20,6 @@ Here are the call details:
 
 Link to join the google meets call: {{appointment.meeting_location}}
 
-
-If you need to cancel please give 2 hours notice and click here:  {{appointment.cancellation_link}}
-
-If you'd like to reschedule you can by clicking here:  {{appointment.reschedule_link}}
 On our call we will be mapping out a plan to help your child build the proper foundations in Grade 9-10 math so they can feel more confident and achieve higher grades.
 
 Before that call there is one thing you need to do and that is to read the document I’ve put together:
@@ -72,7 +68,7 @@ Mohammad went from 69% to 98% for his final math grade and gained more confidenc
 
 If you haven't already, make sure you read the short document I sent you before our call:
 
-Click here to read it <<< https://mathmagick.com/assessment-10
+Click here to read it <<< https://mathmagick.com/program-offer
 
 It will help us make the most of our time together and allow us to hit the ground running.
 

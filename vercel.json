@@ -37,6 +37,10 @@
     {
       "path": "/cron/google-calendar-watch-refresh",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/cron/send-booking-reminders",
+      "schedule": "0 1 * * *"
     }
   ]
 }

@@ -45,4 +45,30 @@ router.post(
   homeworkHelpController.uploadImage
 );
 
+
+// Route to HANDLE DRILL AND HOMEWORK WORKSHEET MARKS 
+
+router.post(
+  "/worksheet/submit-marks",
+  homeworkHelpController.worksheetSubmitMarks
+);
+
+
+router.post(
+  "/drill/submit-marks",
+  homeworkHelpController.DrillsubmitMarks
+);
+
+// Routes to GET DRILL AND WORKSHEET MARKS
+
+router.get(
+  "/drill/get-marks",
+  homeworkHelpController.getDrillMarks
+);
+
+router.get(
+  "/worksheet/get-marks",
+  homeworkHelpController.getWorksheetMarks
+);
+
 module.exports = router;

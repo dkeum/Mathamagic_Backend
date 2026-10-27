@@ -3,7 +3,8 @@ const router = express.Router();
 
 const { cleanUpOldVideos } = require("../api/cron/cleanupvideos");
 
-const {refreshFxRate} = require("../api/cron/refresh-fx-rate")
+const { refreshFxRate } = require("../api/cron/refresh-fx-rate")
+const { sendBookingReminders } = require("../api/cron/send-booking-reminders");
 
 // if (process.env.NODE_ENV !== "DEVELOPMENT") {
 //     const setCorsHeaders = (req, res, next) => {
@@ -21,5 +22,6 @@ const {refreshFxRate} = require("../api/cron/refresh-fx-rate")
 // Vercel Cron Endpoint
 router.get("/cron/cleanup", cleanUpOldVideos);
 router.get("/cron/refresh-fx-rate", refreshFxRate);
+router.get("/cron/send-booking-reminders", sendBookingReminders);
 
 module.exports = router;

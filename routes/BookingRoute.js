@@ -41,3 +41,20 @@ applyCustomCors(router);
 module.exports = router;
 
 
+
+
+// BEHAVIORS TO VERIFY
+
+// (1)  AN email is sent to the person who booked the meeting 
+    // -- the content of the meeting will be the email template with the information hydrated in
+         // information should include the meeting link, time and timezone
+
+// (2) Cancel FLOW 
+
+// (3) Reschedule FLOW
+
+// (4) Create website for tracking leads Data 
+
+// (5) Finish Skool course
+
+// (6) Create a video explanation for the Program. 

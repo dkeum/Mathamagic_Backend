@@ -24,7 +24,7 @@ On our call we will be mapping out a plan to help your child build the proper fo
 
 Before that call there is one thing you need to do and that is to read the document I’ve put together:
 
-Click here to read it <<< https://mathmagick.com/assessment-10
+Click here to read it <<< https://mathmagick.com/program-offer
 
 It’s a quick read and it’s especially for parents like you who are wanting to give their child the edge. This will make sure we can hit the ground running on the call.
 
@@ -51,10 +51,6 @@ You can add the appointment to your calendar here:
 Google Calendar: {{appointment.add_to_google_calendar}}
 iCal/Outlook:
 {{appointment.add_to_ical_outlook}}
-
-If you need to cancel please give 2 hours notice and click here:  {{appointment.cancellation_link}}
-
-If you'd like to reschedule you can by clicking here:  {{appointment.reschedule_link}}
 
 On our call we’ll look at where your child is currently at in Grade 9-10 math, identify any gaps in their foundation, and map out the best path forward.
 
@@ -92,10 +88,6 @@ Here are the call details:
 {{appointment.only_start_time}} {{appointment.timezone}}
 
 Link to join the google meets call: {{appointment.meeting_location}}
-
-If you need to cancel please give 2 hours notice and click here:  {{appointment.cancellation_link}}
-
-If you'd like to reschedule you can by clicking here:  {{appointment.reschedule_link}}
 
 On the call, we’ll look at your child’s current math situation, identify where the biggest gaps are, and discuss a plan to help them build stronger foundations, become more confident, and achieve higher grades.
 

@@ -113,10 +113,21 @@ app.use(
 app.use("/", require("./routes/stripeWebhook"));
 
 
+
+
+app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
+
+
+
+
+
+
+
+
 app.use(bodyParser.urlencoded({ extended: true }));
 // app.use(bodyParser.json());
 app.use(cookieParser());
-app.use(express.json());
+// app.use(express.json());
 const PORT = 3000;
 
 app.get("/", (req, res) => {
@@ -141,7 +152,7 @@ app.use("/", require("./routes/cronJobRoute"))
 app.use("/", require("./routes/settingRoute"))
 app.use("/", require("./routes/BookingRoute"))
 app.use("/", require("./routes/userRoute"))
-
+app.use("/", require("./routes/messengerWebhookRoute")); // ← new
 
 // DEVELOPMENT ROUTE 
 app.use("/", require("./routes/dev/testQuestions")) // keep at end

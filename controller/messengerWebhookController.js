@@ -25,7 +25,15 @@ exports.verifyWebhook = (req, res) => {
 exports.verifySignature = (req, res, next) => {
     const secret = process.env.FB_APP_SECRET;
     const sig = req.get('x-hub-signature-256') || '';
-    if (!secret || !req.rawBody) return res.sendStatus(401);
+
+    if (!secret) {
+        console.error('signature: FB_APP_SECRET is not set in Vercel');
+        return res.sendStatus(401);
+    }
+    if (!req.rawBody) {
+        console.error('signature: req.rawBody is missing (JSON parser is not saving it)');
+        return res.sendStatus(401);
+    }
 
     const expected =
         'sha256=' + crypto.createHmac('sha256', secret).update(req.rawBody).digest('hex');
@@ -34,6 +42,7 @@ exports.verifySignature = (req, res, next) => {
         sig.length !== expected.length ||
         !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))
     ) {
+        console.error('signature: mismatch', { hasHeader: !!sig, secretLength: secret.length });
         return res.sendStatus(401);
     }
     next();

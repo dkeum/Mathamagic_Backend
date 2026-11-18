@@ -26,6 +26,7 @@ async function getLeadsDashboard(req, res) {
 
         console.log("this is the token: pt3");
 
+
         // Owner only: your own Supabase user id (same value the Messenger webhook uses)
         if (!process.env.OWNER_USER_ID || auth.user.id !== process.env.OWNER_USER_ID) {
             return res.sendStatus(403);

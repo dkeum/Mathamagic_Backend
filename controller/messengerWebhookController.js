@@ -24,6 +24,7 @@ exports.verifyWebhook = (req, res) => {
 
 exports.verifySignature = (req, res, next) => {
     const secret = process.env.FB_APP_SECRET;
+
     const sig = req.get('x-hub-signature-256') || '';
 
     if (!secret) {

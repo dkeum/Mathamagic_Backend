@@ -152,7 +152,8 @@ app.use("/", require("./routes/cronJobRoute"))
 app.use("/", require("./routes/settingRoute"))
 app.use("/", require("./routes/BookingRoute"))
 app.use("/", require("./routes/userRoute"))
-app.use("/", require("./routes/messengerWebhookRoute")); // ← new
+app.use("/", require("./routes/messengerWebhookRoute"));
+app.use("/", require("./routes/leadsDashboardRoute"));
 
 // DEVELOPMENT ROUTE 
 app.use("/", require("./routes/dev/testQuestions")) // keep at end

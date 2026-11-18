@@ -129,7 +129,7 @@ async function handleEvent(event) {
     let leadId = null;
     const { data: lead } = await supabase
         .from("leads")
-        .select("id")
+        .select("id, program_docs_sent_at")
         .eq("email", bookerEmail)
         .limit(1)
         .maybeSingle();
@@ -193,8 +193,23 @@ async function handleEvent(event) {
 
     // Immediately call POST /bookings/email, once per booking.
     // confirmation_email_sent_at makes this safe if Google re-sends the same change.
+    // Immediately call POST /bookings/email, once per booking.
     if (!saved.confirmation_email_sent_at) {
         try {
+            // Have they already received the program documents?
+            let alreadyHasDocs = !!lead?.program_docs_sent_at;
+            if (!alreadyHasDocs) {
+                const { data: prior } = await supabase
+                    .from("bookings")
+                    .select("id")
+                    .eq("booker_email", bookerEmail)
+                    .neq("id", saved.id)
+                    .not("program_docs_sent_at", "is", null)
+                    .limit(1)
+                    .maybeSingle();
+                alreadyHasDocs = !!prior;
+            }
+
             await callBookingEmailRoute({
                 bookingId: saved.id,
                 name: bookerName,
@@ -203,11 +218,23 @@ async function handleEvent(event) {
                 endTime,
                 timezone: event.start?.timeZone || null,
                 meetLink,
+                includeProgramDocs: !alreadyHasDocs,   // <- new flag
             });
+
+            const now = new Date().toISOString();
             await supabase
                 .from("bookings")
-                .update({ confirmation_email_sent_at: new Date().toISOString() })
+                .update({
+                    confirmation_email_sent_at: now,
+                    ...(alreadyHasDocs ? {} : { program_docs_sent_at: now }),
+                })
                 .eq("id", saved.id);
+
+            if (!alreadyHasDocs && leadId) {
+                await supabase.from("leads")
+                    .update({ program_docs_sent_at: now })
+                    .eq("id", leadId);
+            }
         } catch (e) {
             // Never let an email problem break the calendar sync
             console.error("booking email failed:", e.message);

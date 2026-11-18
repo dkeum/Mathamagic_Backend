@@ -10,6 +10,7 @@ module.exports = {
     email1: {
         title: "Booked Call Confirmation",
         subject: "[Important] How to prepare for your call",
+        subjectNoDocs: "Your Mathmagick call is confirmed",
         body: `Hey hey! It’s {{user.name}}
 
 Thanks for scheduling a time to speak with me regarding your child’s math studies.
@@ -22,13 +23,14 @@ Link to join the google meets call: {{appointment.meeting_location}}
 
 On our call we will be mapping out a plan to help your child build the proper foundations in Grade 9-10 math so they can feel more confident and achieve higher grades.
 
-Before that call there is one thing you need to do and that is to read the document I’ve put together:
+{{#docs}}Before that call there is one thing you need to do and that is to read the document I’ve put together:
 
 Click here to read it <<< https://mathmagick.com/program-offer
 
 It’s a quick read and it’s especially for parents like you who are wanting to give their child the edge. This will make sure we can hit the ground running on the call.
 
-Thanks 
+{{/docs}}Thanks
+ 
 {{user.name}}
 
 PS - I will be reaching out personally to confirm your booking so please watch out for that and make sure you reply so I can keep the slot open.`,
@@ -62,13 +64,13 @@ For example, Hudson went from struggling at 60% to 79% in 12 weeks and is now ac
 
 Mohammad went from 69% to 98% for his final math grade and gained more confidence in his homework.
 
-If you haven't already, make sure you read the short document I sent you before our call:
+{{#docs}}If you haven't already, make sure you read the short document I sent you before our call:
 
 Click here to read it <<< https://mathmagick.com/program-offer
 
 It will help us make the most of our time together and allow us to hit the ground running.
 
-Looking forward to speaking with you!
+{{/docs}}Looking forward to speaking with you!
 
 Thanks 
 {{user.name}}

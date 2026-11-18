@@ -16,10 +16,15 @@ async function getLeadsDashboard(req, res) {
     try {
         // Same cookie auth you use elsewhere
         const token = req.cookies?.access_token;
+        console.log("this is the token: pt1");
         if (!token) return res.sendStatus(401);
 
+
+        console.log("this is the token: pt2");
         const { data: auth, error: authError } = await supabase.auth.getUser(token);
         if (authError || !auth?.user) return res.sendStatus(401);
+
+        console.log("this is the token: pt3");
 
         // Owner only: your own Supabase user id (same value the Messenger webhook uses)
         if (!process.env.OWNER_USER_ID || auth.user.id !== process.env.OWNER_USER_ID) {

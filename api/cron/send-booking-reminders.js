@@ -126,7 +126,7 @@ async function processDueReminders() {
         .from("booking_messages")
         .select(
             "id, template_key, for_start_time, attempts, " +
-            "booking:bookings(id, status, start_time, end_time, booker_name, booker_email, timezone, meet_link)"
+            "booking:bookings(id, status, start_time, end_time, booker_name, booker_email, timezone, meet_link, program_docs_sent_at)"
         )
         .eq("status", STATUS.pending)
         .in("template_key", Object.keys(REMINDERS))
@@ -177,6 +177,7 @@ async function processDueReminders() {
                 endTime: booking.end_time,
                 timezone: booking.timezone,
                 meetLink: booking.meet_link,
+                includeProgramDocs: !!booking.program_docs_sent_at, // first-timers keep the nudge, repeat bookers don't
             });
             await markMessage(msg.id, {
                 status: STATUS.sent,

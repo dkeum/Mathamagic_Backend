@@ -100,6 +100,7 @@ function toHtml(text) {
 
 async function sendBookingEmailCore({
     template = "email1",
+    templateKey,
     email,
     startTime,
     endTime,

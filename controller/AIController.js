@@ -3,7 +3,10 @@ const supabase = require("../config/supabaseClient");
 const { GoogleGenAI } = require("@google/genai");
 const { calculateCreditsUsed } = require("../config/aiCredits");
 
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY, vertexai: true });
+const genAI = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
+  vertexai: true,
+});
 
 const PLAN_MODEL_MAP = {
   free: "gemini-2.5-flash",
@@ -16,13 +19,37 @@ function resolveModel(planType) {
   return PLAN_MODEL_MAP[key] || DEFAULT_MODEL;
 }
 
+function formatMultiPartText(text = "") {
+  return String(text)
+    .replace(/\s+(?=\(?[a-e]\)\s)/gi, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function sanitizeHistory(history, maxTurns = 12, maxCharsPerTurn = 4000) {
+  if (!Array.isArray(history)) return [];
+  return history.slice(-maxTurns).map((m) => ({
+    role: m.role === "ai" || m.role === "assistant" ? "model" : "user",
+    parts: [{ text: String(m.text || "").slice(0, maxCharsPerTurn) }],
+  }));
+}
+
 async function requireStudent(req) {
   const authHeader = req.headers.authorization;
-  const token = authHeader ? authHeader.split(" ")[1] : req.cookies?.access_token;
-  if (!token) return { error: { status: 401, message: "Missing or invalid token." } };
+  const token = authHeader
+    ? authHeader.split(" ")[1]
+    : req.cookies?.access_token;
+  if (!token) {
+    return { error: { status: 401, message: "Missing or invalid token." } };
+  }
 
-  const { data: { user }, error: userError } = await supabase.auth.getUser(token);
-  if (userError || !user) return { error: { status: 401, message: "Unauthorized user." } };
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser(token);
+  if (userError || !user) {
+    return { error: { status: 401, message: "Unauthorized user." } };
+  }
 
   const { data: student, error: studentError } = await supabase
     .from("Student")
@@ -30,76 +57,57 @@ async function requireStudent(req) {
     .eq("email", user.email)
     .single();
 
-  if (studentError || !student) return { error: { status: 404, message: "Student not found." } };
+  if (studentError || !student) {
+    return { error: { status: 404, message: "Student not found." } };
+  }
   return { student };
 }
 
-
 async function recordAnswerKeyFlag(questionId, dbAnswer, aiSolution) {
-  const { error } = await supabase
-    .from("answer_key_flag")
-    .insert({
-      question_id: questionId,
-      db_answer: dbAnswer,
-      ai_solution: aiSolution,
-    });
+  const { error } = await supabase.from("answer_key_flag").insert({
+    question_id: questionId,
+    db_answer: dbAnswer,
+    ai_solution: aiSolution,
+  });
 
   if (error) {
-    console.error(`Failed to record answer_key_flag for question ${questionId}:`, error);
+    console.error(
+      `Failed to record answer_key_flag for question ${questionId}:`,
+      error
+    );
   }
 }
-
-
-async function getQuestionsByIds(questionIds) {
-  const { data, error } = await supabase
-    .from("question")
-    .select("id, question, hint, formula, answer")
-    .in("id", questionIds);
-
-  if (error) {
-    console.error("getQuestionsByIds failed:", error);
-    return [];
-  }
-
-  return data || [];
-}
-
 
 function normalizeLatex(str) {
   if (!str) return "";
 
   let normalized = str.trim();
-
-  // Remove all regular spaces
   normalized = normalized.replace(/\s+/g, "");
-
-  // Remove LaTeX spacing commands like \ , \quad, \! etc.
   normalized = normalized.replace(/\\(,|;|:|quad|qquad|!)/g, "");
-
-  // Replace \mathrm{...} with just its contents
   normalized = normalized.replace(/\\mathrm\{([^}]+)\}/g, "$1");
 
-  // Replace Unicode superscripts (², ³, etc.) with ^2, ^3
   const superscriptMap = {
-    '⁰': '0', '¹': '1', '²': '2', '³': '3',
-    '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7',
-    '⁸': '8', '⁹': '9'
+    "⁰": "0",
+    "¹": "1",
+    "²": "2",
+    "³": "3",
+    "⁴": "4",
+    "⁵": "5",
+    "⁶": "6",
+    "⁷": "7",
+    "⁸": "8",
+    "⁹": "9",
   };
-  normalized = normalized.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]/g, m => "^" + superscriptMap[m]);
+  normalized = normalized.replace(
+    /[⁰¹²³⁴⁵⁶⁷⁸⁹]/g,
+    (m) => "^" + superscriptMap[m]
+  );
 
-  // Lowercase for unit matching (e.g., CM → cm)
   normalized = normalized.toLowerCase();
 
   return normalized;
 }
 
-
-
-
-
-// Block before making the (expensive) Gemini call at all if the student is already out.
-// Actual cost isn't known until the response comes back, so the real charge happens after —
-// this pre-check just stops calls from a student sitting at 0 or negative.
 function hasCredits(student) {
   return (student.AI_Credit ?? 0) > 0;
 }
@@ -113,15 +121,11 @@ async function chargeCredits(studentId, credits) {
     console.error("Credit deduction failed:", error);
     return null;
   }
-  return data; // remaining balance
+  return data;
 }
 
-// NEW — records today's cumulative credit usage for a student under a
-// given category (all four AI endpoints below use "ai_chat"). Upserts
-// via the record_ai_usage RPC so a day's usage is one row that grows,
-// not a new row per call.
 async function recordAiUsage(studentId, credits, category = "ai_chat") {
-  const usageDate = new Date().toISOString().slice(0, 10); // UTC YYYY-MM-DD
+  const usageDate = new Date().toISOString().slice(0, 10);
 
   const { error } = await supabase.rpc("record_ai_usage", {
     p_student_id: studentId,
@@ -134,9 +138,6 @@ async function recordAiUsage(studentId, credits, category = "ai_chat") {
     console.error("Failed to record AI usage:", error);
   }
 }
-
-
-
 
 async function getQuestionsByIds(questionIds) {
   const { data, error } = await supabase
@@ -152,14 +153,11 @@ async function getQuestionsByIds(questionIds) {
   return data || [];
 }
 
-// Exactly one option should have correct: true. Anything else means bad seed data.
 function getCorrectOption(options) {
   if (!Array.isArray(options)) return { ok: false, correctOptions: [] };
   const correctOptions = options.filter((o) => o?.correct === true);
   return { ok: correctOptions.length === 1, correctOptions };
 }
-
-
 
 const verifyAnswers = asyncHandler(async (req, res) => {
   const { student, error } = await requireStudent(req);
@@ -173,14 +171,16 @@ const verifyAnswers = asyncHandler(async (req, res) => {
   const model = resolveModel(student.plan_type ?? clientPlanType);
 
   if (!Array.isArray(attempts) || attempts.length === 0) {
-    return res.status(400).json({ message: "attempts must be a non-empty array." });
+    return res
+      .status(400)
+      .json({ message: "attempts must be a non-empty array." });
   }
 
-  const questionIds = attempts.map(a => a.question_id);
+  const questionIds = attempts.map((a) => a.question_id);
   const questions = await getQuestionsByIds(questionIds);
-  const questionMap = new Map(questions.map(q => [String(q.id), q]));
+  const questionMap = new Map(questions.map((q) => [String(q.id), q]));
 
-  const gradingData = attempts.map(a => {
+  const gradingData = attempts.map((a) => {
     const q = questionMap.get(String(a.question_id));
     return {
       question_id: a.question_id,
@@ -193,12 +193,12 @@ const verifyAnswers = asyncHandler(async (req, res) => {
     };
   });
 
-  const isMC = (g) => g.question_type === "multiple_choice" && Array.isArray(g.options);
+  const isMC = (g) =>
+    g.question_type === "multiple_choice" && Array.isArray(g.options);
   const mcItems = gradingData.filter(isMC);
-  const freeItems = gradingData.filter(g => !isMC(g));
+  const freeItems = gradingData.filter((g) => !isMC(g));
 
   try {
-    // ── Multiple choice: graded deterministically from options[].correct — no AI call ──
     const mcResults = [];
     for (const g of mcItems) {
       const { ok, correctOptions } = getCorrectOption(g.options);
@@ -212,11 +212,10 @@ const verifyAnswers = asyncHandler(async (req, res) => {
           JSON.stringify(g.options),
           `${correctOptions.length} options marked correct; expected exactly 1`
         );
-        // No reliable ground truth — fall back to a literal text match against
-        // whichever legacy `answer` field exists, rather than silently marking wrong.
         mcResults.push({
           question_id: g.question_id,
-          is_correct: normalizeLatex(g.answer_given) === normalizeLatex(g.correct_answer),
+          is_correct:
+            normalizeLatex(g.answer_given) === normalizeLatex(g.correct_answer),
         });
         continue;
       }
@@ -228,7 +227,6 @@ const verifyAnswers = asyncHandler(async (req, res) => {
       });
     }
 
-    // ── Free response: still needs the AI to judge equivalent forms ──
     let freeResults = [];
     let creditsUsed = 0;
 
@@ -265,7 +263,7 @@ Include every question_id from the input, in the same order, exactly once.`;
       });
 
       const rawResults = JSON.parse(response.text);
-      const resultMap = new Map(rawResults.map(r => [String(r.question_id), r]));
+      const resultMap = new Map(rawResults.map((r) => [String(r.question_id), r]));
 
       for (const g of freeItems) {
         const r = resultMap.get(String(g.question_id));
@@ -273,7 +271,9 @@ Include every question_id from the input, in the same order, exactly once.`;
         if (!r) {
           freeResults.push({
             question_id: g.question_id,
-            is_correct: normalizeLatex(g.answer_given) === normalizeLatex(g.correct_answer),
+            is_correct:
+              normalizeLatex(g.answer_given) ===
+              normalizeLatex(g.correct_answer),
           });
           continue;
         }
@@ -282,10 +282,17 @@ Include every question_id from the input, in the same order, exactly once.`;
           console.warn(
             `Answer key mismatch for question ${g.question_id}: DB has "${g.correct_answer}", model solved "${r.correct_solution}"`
           );
-          await recordAnswerKeyFlag(g.question_id, g.correct_answer, r.correct_solution);
+          await recordAnswerKeyFlag(
+            g.question_id,
+            g.correct_answer,
+            r.correct_solution
+          );
         }
 
-        freeResults.push({ question_id: g.question_id, is_correct: !!r.is_correct });
+        freeResults.push({
+          question_id: g.question_id,
+          is_correct: !!r.is_correct,
+        });
       }
 
       creditsUsed = await calculateCreditsUsed(model, response.usageMetadata);
@@ -329,15 +336,16 @@ const verifyAnswer = asyncHandler(async (req, res) => {
 
   try {
     const hasImage = !!(attachedImageUrl || attachedImageBase64);
-    const promptText = correctAnswer != null
-      ? `You are grading a single math answer.
+    const promptText =
+      correctAnswer != null
+        ? `You are grading a single math answer.
 Question: ${question}
 Correct answer: ${correctAnswer}
 Student's typed answer: ${studentAnswerText || "(none)"}
 ${hasImage ? "The student also attached an image of their work — consider it." : ""}
 If the answer is incorrect, briefly explain what's wrong in one short sentence.
 Return: {"is_correct": true or false, "reason": "<short explanation if incorrect, otherwise null>"}`
-      : `You are grading a single math answer. There is no answer key — judge correctness using your own mathematical reasoning.
+        : `You are grading a single math answer. There is no answer key — judge correctness using your own mathematical reasoning.
 Question: ${question}
 Student's typed answer: ${studentAnswerText || "(none)"}
 ${hasImage ? "The student also attached an image of their work — consider it." : ""}
@@ -348,14 +356,19 @@ Return: {"is_correct": true or false, "reason": "<short explanation if incorrect
 
     if (attachedImageUrl) {
       const imgResponse = await fetch(attachedImageUrl);
-      if (!imgResponse.ok) throw new Error(`Failed to fetch image from URL: ${attachedImageUrl}`);
+      if (!imgResponse.ok) {
+        throw new Error(`Failed to fetch image from URL: ${attachedImageUrl}`);
+      }
       const arrayBuffer = await imgResponse.arrayBuffer();
       const base64Data = Buffer.from(arrayBuffer).toString("base64");
       const mimeType = imgResponse.headers.get("content-type") || "image/jpeg";
       parts.push({ inlineData: { mimeType, data: base64Data } });
     } else if (attachedImageBase64) {
       parts.push({
-        inlineData: { mimeType: "image/jpeg", data: attachedImageBase64.split(",").pop() },
+        inlineData: {
+          mimeType: "image/jpeg",
+          data: attachedImageBase64.split(",").pop(),
+        },
       });
     }
 
@@ -368,16 +381,20 @@ Return: {"is_correct": true or false, "reason": "<short explanation if incorrect
     const parsed = JSON.parse(response.text);
     const creditsUsed = calculateCreditsUsed(model, response.usageMetadata);
     const remaining = await chargeCredits(student.id, creditsUsed);
-    await recordAiUsage(student.id, creditsUsed); // NEW
+    await recordAiUsage(student.id, creditsUsed);
 
     res.set("X-AI-Credits-Remaining", remaining ?? student.AI_Credit);
-    return res.json({ is_correct: !!parsed.is_correct, reason: parsed.reason ?? null });
+    return res.json({
+      is_correct: !!parsed.is_correct,
+      reason: parsed.reason ?? null,
+    });
   } catch (err) {
     console.error("verifyAnswer failed:", err);
-    return res.status(500).json({ message: "Verification failed", is_correct: false });
+    return res
+      .status(500)
+      .json({ message: "Verification failed", is_correct: false });
   }
 });
-
 
 // POST /ai/chat
 const chat = asyncHandler(async (req, res) => {
@@ -388,14 +405,28 @@ const chat = asyncHandler(async (req, res) => {
     return res.status(402).json({ message: "Out of AI credits." });
   }
 
-  const { topic, section, currentQuestion, history, message, attachments, plan_type: clientPlanType } = req.body;
+  const {
+    topic,
+    section,
+    currentQuestion,
+    history,
+    message,
+    attachments,
+    plan_type: clientPlanType,
+  } = req.body;
   const model = resolveModel(student.plan_type ?? clientPlanType);
 
   if (!message?.trim() && !(attachments?.length > 0)) {
-    return res.status(400).json({ message: "message or attachments required." });
+    return res
+      .status(400)
+      .json({ message: "message or attachments required." });
   }
 
   try {
+    const formattedQuestion = formatMultiPartText(
+      currentQuestion?.question || "Not available"
+    );
+
     const systemInstruction = `You are a helpful, encouraging math tutor for high school students.
 
    [RULES]
@@ -403,36 +434,41 @@ const chat = asyncHandler(async (req, res) => {
   2. Guide step-by-step without giving away the direct answer.
   3. Bold each step label like "**Step 1:**", "**Step 2:**", etc.
   4. Put a blank line (a full empty line, i.e. two newlines) between each step so they render as separate paragraphs in Markdown.
-  5. Write every math expression using LaTeX delimiters, and write each one only ONCE — never repeat the same expression twice in a row or restate it in plain text right after the LaTeX version.
-  6. When an expression is the main focus of a step (the thing being explained or transformed), put it on its own separate line using display math: $$...$$. Use inline math ($...$) only for short expressions mentioned in passing within a sentence.
-  7. If images are attached, analyze them as part of the student's work.
-
+  5. Whenever a question or response contains multi-part items like a), b), c), always put each part on its own new line.
+  6. Write every math expression using LaTeX delimiters, and write each one only ONCE — never repeat the same expression twice in a row or restate it in plain text right after the LaTeX version.
+  7. When an expression is the main focus of a step (the thing being explained or transformed), put it on its own separate line using display math: $$...$$. Use inline math ($...$) only for short expressions mentioned in passing within a sentence.
+  8. If images are attached, analyze them as part of the student's work.
 
   [CONTEXT]
-  The student is working on "${topic}" — specifically "${section}".
-  Current Question: "${currentQuestion?.question || "Not available"}"
-  ${currentQuestion?.formula ? `Formula: ${currentQuestion.formula}` : "No specific formula provided."}
-  ${currentQuestion?.hint ? `Hint: ${currentQuestion.hint}` : "No specific hint provided."}`;
+  The student is working on "${topic || "General Math"}" — specifically "${section || "Practice"
+      }".
+  Current Question: "${formattedQuestion}"
+  ${currentQuestion?.formula
+        ? `Formula: ${currentQuestion.formula}`
+        : "No specific formula provided."
+      }
+  ${currentQuestion?.hint
+        ? `Hint: ${currentQuestion.hint}`
+        : "No specific hint provided."
+      }`;
 
-    // Map text history
-    const contents = (history || []).map((m) => ({
-      role: m.role === "ai" ? "model" : "user",
-      parts: [{ text: m.text }],
-    }));
+    const contents = sanitizeHistory(history, 12, 4000);
+    const currentParts = [
+      { text: String(message || "Check out this image.").slice(0, 4000) },
+    ];
 
-    const currentParts = [{ text: message || "Check out this image." }];
-
-    // Process Supabase image URLs
     if (attachments?.length > 0) {
-      const imagePromises = attachments.map(async (url) => {
+      const imagePromises = attachments.slice(0, 4).map(async (url) => {
         try {
-          // Fetch the image from the Supabase public URL
+          if (typeof url !== "string" || !url.startsWith("http")) return null;
           const response = await fetch(url);
-          if (!response.ok) throw new Error(`Failed to fetch image from URL: ${url}`);
+          if (!response.ok) {
+            throw new Error(`Failed to fetch image from URL: ${url}`);
+          }
 
           const arrayBuffer = await response.arrayBuffer();
-          const base64Data = Buffer.from(arrayBuffer).toString('base64');
-          const mimeType = response.headers.get('content-type') || 'image/jpeg';
+          const base64Data = Buffer.from(arrayBuffer).toString("base64");
+          const mimeType = response.headers.get("content-type") || "image/jpeg";
 
           return {
             inlineData: {
@@ -446,10 +482,7 @@ const chat = asyncHandler(async (req, res) => {
         }
       });
 
-      // Wait for all images to be fetched and converted
       const resolvedImages = await Promise.all(imagePromises);
-
-      // Append successfully processed images to the prompt parts
       resolvedImages.forEach((imgPart) => {
         if (imgPart) currentParts.push(imgPart);
       });
@@ -464,20 +497,78 @@ const chat = asyncHandler(async (req, res) => {
     });
 
     const creditsUsed = await calculateCreditsUsed(model, response.usageMetadata);
-
-    console.log("credit used", creditsUsed);
     const remaining = await chargeCredits(student.id, creditsUsed);
-    await recordAiUsage(student.id, creditsUsed); // NEW
+    await recordAiUsage(student.id, creditsUsed);
+
+    const formattedText = formatMultiPartText(
+      response.text || "I couldn't process that."
+    );
 
     res.set("X-AI-Credits-Remaining", remaining ?? student.AI_Credit);
-    return res.json({ text: response.text || "I couldn't process that." });
+    return res.json({ text: formattedText });
   } catch (err) {
     console.error("AI chat failed:", err);
     return res.status(500).json({ message: "Chat failed" });
   }
 });
 
+// POST /ai/chat-file
+const chatFile = asyncHandler(async (req, res) => {
+  const { student, error } = await requireStudent(req);
+  if (error) return res.status(error.status).json({ message: error.message });
 
+  if (!hasCredits(student)) {
+    return res.status(402).json({ message: "Out of AI credits." });
+  }
+
+  const { prompt, history, imageUrl, plan_type: clientPlanType } = req.body;
+  const model = resolveModel(student.plan_type ?? clientPlanType);
+
+  if (!prompt?.trim() && !imageUrl) {
+    return res.status(400).json({ message: "prompt or imageUrl required." });
+  }
+
+  try {
+    const systemInstruction = `You are a helpful math assistant helping a student with an uploaded PDF page or image. Always put multi-part items like a), b), c) on their own separate lines.`;
+
+    const contents = sanitizeHistory(history, 10, 4000);
+    const userParts = [
+      { text: String(prompt || "Please help with this page.").slice(0, 4000) },
+    ];
+
+    if (imageUrl && typeof imageUrl === "string" && imageUrl.startsWith("http")) {
+      const imgResponse = await fetch(imageUrl);
+      if (imgResponse.ok) {
+        const arrayBuffer = await imgResponse.arrayBuffer();
+        const base64Data = Buffer.from(arrayBuffer).toString("base64");
+        const mimeType = imgResponse.headers.get("content-type") || "image/png";
+        userParts.push({ inlineData: { mimeType, data: base64Data } });
+      }
+    }
+
+    contents.push({ role: "user", parts: userParts });
+
+    const response = await genAI.models.generateContent({
+      model,
+      contents,
+      config: { systemInstruction },
+    });
+
+    const creditsUsed = await calculateCreditsUsed(model, response.usageMetadata);
+    const remaining = await chargeCredits(student.id, creditsUsed);
+    await recordAiUsage(student.id, creditsUsed);
+
+    const formattedReply = formatMultiPartText(
+      response.text || "I couldn't process that."
+    );
+
+    res.set("X-AI-Credits-Remaining", remaining ?? student.AI_Credit);
+    return res.json({ reply: formattedReply, text: formattedReply });
+  } catch (err) {
+    console.error("AI chat-file failed:", err);
+    return res.status(500).json({ message: "File chat failed" });
+  }
+});
 
 // POST /ai/read-question
 const readQuestion = asyncHandler(async (req, res) => {
@@ -496,10 +587,12 @@ const readQuestion = asyncHandler(async (req, res) => {
   }
 
   try {
-    const promptText = `Look at the attached image of a math problem. Transcribe the question exactly as written, including all numbers, variables, and any given conditions. Respond with ONLY the question text, no preamble, no markdown, no extra commentary.`;
+    const promptText = `Look at the attached image of a math problem. Transcribe the question exactly as written, including all numbers, variables, and any given conditions. Put any multi-part labels like a), b), c) on their own separate lines. Respond with ONLY the question text, no preamble, no markdown, no extra commentary.`;
 
     const imgResponse = await fetch(imageUrl);
-    if (!imgResponse.ok) throw new Error(`Failed to fetch image from URL: ${imageUrl}`);
+    if (!imgResponse.ok) {
+      throw new Error(`Failed to fetch image from URL: ${imageUrl}`);
+    }
     const arrayBuffer = await imgResponse.arrayBuffer();
     const base64Data = Buffer.from(arrayBuffer).toString("base64");
     const mimeType = imgResponse.headers.get("content-type") || "image/jpeg";
@@ -514,12 +607,14 @@ const readQuestion = asyncHandler(async (req, res) => {
       contents: [{ role: "user", parts }],
     });
 
-    const creditsUsed = calculateCreditsUsed(model, response.usageMetadata);
+    const creditsUsed = await calculateCreditsUsed(model, response.usageMetadata);
     const remaining = await chargeCredits(student.id, creditsUsed);
-    await recordAiUsage(student.id, creditsUsed); // NEW
+    await recordAiUsage(student.id, creditsUsed);
+
+    const formattedQuestion = formatMultiPartText(response.text || "");
 
     res.set("X-AI-Credits-Remaining", remaining ?? student.AI_Credit);
-    return res.json({ question: (response.text || "").trim() });
+    return res.json({ question: formattedQuestion });
   } catch (err) {
     console.error("readQuestion failed:", err);
     return res.status(500).json({ message: "Failed to read question." });
@@ -530,10 +625,11 @@ module.exports = {
   verifyAnswers,
   verifyAnswer,
   chat,
+  chatFile,
   readQuestion,
   chargeCredits,
   hasCredits,
   requireStudent,
   resolveModel,
-  recordAiUsage, // NEW — exported so /student/usage-today (or wherever) can reuse the same category constant if needed
+  recordAiUsage,
 };
